@@ -17,6 +17,9 @@ from .config import settings
 
 log = logging.getLogger("tvcast")
 STATIC = Path(__file__).parent / "static"
+# The receiver may open a stream URL again (or a seek restarts it) before dropping the old
+# connection; one ffmpeg per client and file keeps the GPU from encoding the same film twice.
+_streams: dict[tuple[str, str], asyncio.subprocess.Process] = {}
 
 
 @asynccontextmanager
@@ -135,11 +138,16 @@ async def _tail(stream: asyncio.StreamReader, keep: int = 4096) -> bytes:
     return tail
 
 
-async def _pipe(cmd: list[str], request: Request, chunk: int = 256 * 1024):
+async def _pipe(cmd: list[str], request: Request, key: tuple[str, str],
+                chunk: int = 256 * 1024):
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     err_task = asyncio.create_task(_tail(proc.stderr))
+    prev = _streams.get(key)
+    if prev is not None and prev.returncode is None:
+        prev.kill()
+    _streams[key] = proc
     try:
         while True:
             data = await proc.stdout.read(chunk)
@@ -149,6 +157,8 @@ async def _pipe(cmd: list[str], request: Request, chunk: int = 256 * 1024):
             if await request.is_disconnected():
                 break
     finally:
+        if _streams.get(key) is proc:
+            del _streams[key]
         # Shielded: a client disconnect cancels this generator, and an abandoned cleanup
         # would leak the process and its pipes.
         tail = b""
@@ -175,7 +185,8 @@ async def stream(request: Request, item_id: str, mode: str = "remux",
     probe = await run_in_threadpool(media.probe, item)
     cmd = media.ffmpeg_stream_cmd(item, probe, mode, audio, start)
     log.info("ffmpeg: %s", " ".join(cmd))
-    return StreamingResponse(_pipe(cmd, request), media_type="video/mp4")
+    client = request.client.host if request.client else ""
+    return StreamingResponse(_pipe(cmd, request, (client, item.id)), media_type="video/mp4")
 
 
 @app.get("/subs/{item_id}/{key}.vtt")
