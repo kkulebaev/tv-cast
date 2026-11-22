@@ -79,10 +79,59 @@ class Item:
     rel: str
     size: int
     mtime: float
+    series: str = ""
+    season: int = 0
+    episode: int = 0
 
     @property
     def title(self) -> str:
         return self.path.stem
+
+
+# "S01E04", "s1.e4", "S01x04", "1x04", and glued to a release tag: "WebRip720pS01x04".
+# Glued forms need a capital S and two digits, and x264/x265 is never an episode number,
+# so sequels like "Jaws2.x264" or "Pixels2x04" stay films.
+_NOT_CODEC = r"(?!26[45](?!\d))"
+_EPISODE = re.compile(
+    rf"(?:(?<![^\W_])[sS](?P<s1>\d{{1,2}})|(?<=[A-Za-z])S(?P<s2>\d{{2}}))"
+    rf"[ ._-]?[eExX]{_NOT_CODEC}(?P<e1>\d{{1,3}})(?!\d)"
+    rf"|(?<![^\W_])(?P<s3>\d{{1,2}})[xX]{_NOT_CODEC}(?P<e2>\d{{2,3}})(?!\d)")
+# Release tags that trail the show name: "The.Witcher.WebRip.720p.S01E04".
+_RELEASE_TAG = re.compile(
+    r"(?i)[\s\-_.\[(]*(?:web-?rip|web-?dl|bd-?rip|hd-?rip|hdtv|dvd-?rip|blu-?ray|\d{3,4}p"
+    r"|x26[45]|h\.?26[45]|hevc|rus|eng|\(?(?:19|20)\d\d\)?)[\s\-_.\])]*$")
+_SEASON_DIR = re.compile(
+    r"(?i)^(?:(?:season|сезон|s)[ ._-]*\d+|\d+[ ._-]*(?:сезон|season)|specials?)$")
+
+
+def _clean_name(raw: str) -> str:
+    name = spaced = raw.replace(".", " ").replace("_", " ")
+    while (stripped := _RELEASE_TAG.sub("", name)) != name:
+        name = stripped
+    glued = " " not in spaced.strip(" -") and name != spaced
+    name = name.strip(" -[(")
+    if glued:
+        # "TheWitcherWebRip720p" -> "The Witcher"; real names like "iZombie" have no tags glued.
+        name = re.sub(r"(?<=[a-zа-яё])(?=[A-ZА-ЯЁ])", " ", name)
+    return name
+
+
+def episode_info(rel: str) -> tuple[str, int, int] | None:
+    path = Path(rel)
+    m = _EPISODE.search(path.stem)
+    if m is None:
+        return None
+    season = int(m["s1"] or m["s2"] or m["s3"])
+    episode = int(m["e1"] or m["e2"])
+    name = _clean_name(path.stem[:m.start()])
+    if m["s3"] and not name and not path.parent.parts:
+        # A bare "10x10.2018.mkv" in the library root is a film title, not an episode.
+        return None
+    if not name:
+        # "Ведьмак/Season 1/S01E04.mkv": the show is named by its folder.
+        dirs = [d for d in path.parent.parts if not _SEASON_DIR.match(d)]
+        name = dirs[-1] if dirs else ""
+    return (name or "Без названия"), season, episode
 
 
 _library: dict[str, Item] = {}
@@ -101,7 +150,9 @@ def scan() -> list[Item]:
                 rel = str(p.relative_to(root))
                 st = p.stat()
                 item_id = hashlib.sha1(rel.encode()).hexdigest()[:16]
-                found[item_id] = Item(item_id, p, rel, st.st_size, st.st_mtime)
+                ep = episode_info(rel)
+                found[item_id] = Item(item_id, p, rel, st.st_size, st.st_mtime,
+                                      *(ep or ("", 0, 0)))
     global _library
     # Swapped whole: requests served from other threads must never see a half-built dict.
     _library = found

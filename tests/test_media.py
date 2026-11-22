@@ -166,6 +166,36 @@ def test_bcp47(raw, code):
     assert media.bcp47(raw) == code
 
 
+@pytest.mark.parametrize(
+    ("rel", "expected"),
+    [
+        ("TheWitcherWebRip720pS01x04.mkv", ("The Witcher", 1, 4)),
+        ("The.Witcher.S02E10.1080p.WEB-DL.Rus.mkv", ("The Witcher", 2, 10)),
+        ("Dark - S03E08 [1080p].mkv", ("Dark", 3, 8)),
+        ("Friends 1x04.avi", ("Friends", 1, 4)),
+        ("Show/Show.s1.e4.mkv", ("Show", 1, 4)),
+        ("Ведьмак/Season 1/S01E04.mkv", ("Ведьмак", 1, 4)),
+        ("Ведьмак/Сезон 2/02x05.mkv", ("Ведьмак", 2, 5)),
+        ("S01E01.mkv", ("Без названия", 1, 1)),
+        ("Nevidimyi_gost`_2016_BDRip_by_Dalemake.avi", None),
+        ("Movie.1920x1080.mkv", None),
+        ("Film.x264.mkv", None),
+        ("Jaws2.x264.mkv", None),
+        ("Cars3.x265.mkv", None),
+        ("Rocky.2x264.mkv", None),
+        ("Pixels2x04.mkv", None),
+        ("10x10.2018.mkv", None),
+        ("Сериал/1 сезон/S01E02.mkv", ("Сериал", 1, 2)),
+        ("Show/Specials/S00E01.mkv", ("Show", 0, 1)),
+        ("The.Witcher.2019.S01E01.mkv", ("The Witcher", 1, 1)),
+        ("iZombie.S02E03.mkv", ("iZombie", 2, 3)),
+        ("Show_S01E01.mkv", ("Show", 1, 1)),
+    ],
+)
+def test_episode_info(rel, expected):
+    assert media.episode_info(rel) == expected
+
+
 def test_scan_finds_videos_recursively(tmp_path, monkeypatch):
     monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
     (tmp_path / "b").mkdir()
@@ -176,3 +206,11 @@ def test_scan_finds_videos_recursively(tmp_path, monkeypatch):
     assert [i.rel for i in items] == ["a.mp4", "b/Film.MKV"]
     assert media.get(items[1].id).size == 3
     assert media.get("missing") is None
+    assert (items[0].series, items[1].series) == ("", "")
+
+
+def test_scan_tags_episodes(tmp_path, monkeypatch):
+    monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
+    (tmp_path / "Dark.S01E02.mkv").touch()
+    (ep,) = media.scan()
+    assert (ep.series, ep.season, ep.episode) == ("Dark", 1, 2)

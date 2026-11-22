@@ -59,7 +59,8 @@ async def library():
     return {
         "root": str(settings.media_dir),
         "items": [
-            {"id": i.id, "title": i.title, "rel": i.rel, "size": i.size, "mtime": i.mtime}
+            {"id": i.id, "title": i.title, "rel": i.rel, "size": i.size, "mtime": i.mtime,
+             "series": i.series, "season": i.season, "episode": i.episode}
             for i in items
         ],
     }
@@ -74,6 +75,7 @@ async def item_info(item_id: str, audio: int | None = None, transcode: bool = Fa
         raise HTTPException(422, f"ffprobe не смог прочитать файл: {e}") from e
     mode, reason = media.plan(probe, audio, transcode)
     return {"id": item.id, "title": item.title, "rel": item.rel,
+            "series": item.series, "season": item.season, "episode": item.episode,
             "probe": media.probe_dict(probe), "mode": mode, "reason": reason}
 
 
