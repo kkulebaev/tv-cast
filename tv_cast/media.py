@@ -23,6 +23,7 @@ CAST_VIDEO = {"h264", "hevc", "vp8", "vp9"}
 CAST_AUDIO = {"aac", "mp3", "opus", "vorbis", "flac"}
 # Bitmap subtitles (PGS, VobSub) can't become WebVTT without OCR.
 TEXT_SUBS = {"subrip", "ass", "ssa", "webvtt", "mov_text", "text"}
+_SUB_KEY = re.compile(r"[ex][0-9]+")
 
 Mode = Literal["direct", "remux", "transcode"]
 
@@ -303,16 +304,16 @@ def shift_vtt(vtt: str, offset: float) -> str:
 
 
 def ffmpeg_subs_cmd(item: Item, key: str) -> list[str] | None:
+    if not _SUB_KEY.fullmatch(key):
+        return None
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
     if key.startswith("e"):
         cmd += ["-i", str(item.path), "-map", f"0:{int(key[1:])}"]
-    elif key.startswith("x"):
+    else:
         src = sidecar(item, int(key[1:]))
         if src is None:
             return None
         cmd += ["-i", str(src), "-map", "0:s:0"]
-    else:
-        return None
     return cmd + ["-f", "webvtt", "pipe:1"]
 
 

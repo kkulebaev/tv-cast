@@ -99,6 +99,11 @@ def test_shift_vtt_without_offset_is_identity():
     assert media.shift_vtt(VTT, 0) == VTT
 
 
+@pytest.mark.parametrize("key", ["", "e", "x", "eabc", "y1", "e1;rm", "../x0", "e\u0661"])
+def test_subs_cmd_rejects_malformed_keys(key):
+    assert media.ffmpeg_subs_cmd(item(), key) is None
+
+
 def test_scan_finds_videos_recursively(tmp_path, monkeypatch):
     monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
     (tmp_path / "b").mkdir()
