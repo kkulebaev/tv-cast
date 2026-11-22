@@ -2,8 +2,11 @@ import asyncio
 import sys
 import threading
 import time
+from pathlib import Path
 
-from tv_cast import app
+from fastapi.testclient import TestClient
+
+from tv_cast import app, media
 
 
 class _Request:
@@ -62,3 +65,17 @@ def test_disconnect_with_unread_output_does_not_hang_cleanup():
     assert time.monotonic() - started < 5
     assert out
     assert app._streams == {}
+
+
+def test_stream_answers_422_when_probe_fails(monkeypatch):
+    item = media.Item("abc", Path("/m/broken.mkv"), "broken.mkv", 1, 0.0)
+    monkeypatch.setattr(media, "get", lambda item_id: item if item_id == "abc" else None)
+
+    def broken(_item):
+        raise RuntimeError("moov atom not found")
+
+    monkeypatch.setattr(media, "probe", broken)
+    client = TestClient(app.app)
+    assert client.get("/stream/abc.mp4").status_code == 422
+    assert client.get("/stream/zzz.mp4").status_code == 404
+    assert client.get("/stream/abc.mp4?mode=bogus").status_code == 400

@@ -182,7 +182,10 @@ async def stream(request: Request, item_id: str, mode: str = "remux",
     if mode not in ("remux", "transcode"):
         raise HTTPException(400, "mode")
     item = _item(item_id)
-    probe = await run_in_threadpool(media.probe, item)
+    try:
+        probe = await run_in_threadpool(media.probe, item)
+    except Exception as e:
+        raise HTTPException(422, f"ffprobe не смог прочитать файл: {e}") from e
     cmd = media.ffmpeg_stream_cmd(item, probe, mode, audio, start)
     log.info("ffmpeg: %s", " ".join(cmd))
     client = request.client.host if request.client else ""
