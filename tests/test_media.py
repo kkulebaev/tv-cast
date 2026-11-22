@@ -5,7 +5,7 @@ import pytest
 
 from tv_cast import media
 from tv_cast.config import settings
-from tv_cast.media import Probe, Track
+from tv_cast.media import Probe, SubTrack, Track
 
 
 def probe(**kw) -> Probe:
@@ -214,3 +214,111 @@ def test_scan_tags_episodes(tmp_path, monkeypatch):
     (tmp_path / "Dark.S01E02.mkv").touch()
     (ep,) = media.scan()
     assert (ep.series, ep.season, ep.episode) == ("Dark", 1, 2)
+
+
+def test_next_episode_crosses_seasons_and_skips_copies(tmp_path, monkeypatch):
+    monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
+    for name in ["Dark.S01E01.mkv", "Dark.S01E02.mkv", "Dark.S01E02.720p.mkv",
+                 "Dark.S02E01.mkv", "Other.S01E03.mkv", "Film.mkv"]:
+        (tmp_path / name).touch()
+    (tmp_path / "Dark.S01E01.720p.mkv").touch()
+    (tmp_path / "Dark.S01E02.720p.mkv").write_bytes(b"x")
+    by_rel = {i.rel: i for i in media.scan()}
+    # Copies of one episode: stay with the release being watched.
+    assert media.next_episode(by_rel["Dark.S01E01.mkv"]).rel == "Dark.S01E02.mkv"
+    assert media.next_episode(by_rel["Dark.S01E01.720p.mkv"]).rel == "Dark.S01E02.720p.mkv"
+    assert media.next_episode(by_rel["Dark.S01E02.mkv"]).rel == "Dark.S02E01.mkv"
+    assert media.next_episode(by_rel["Dark.S02E01.mkv"]) is None
+    assert media.next_episode(by_rel["Film.mkv"]) is None
+
+
+def audio(*tracks):
+    return probe(audio=list(tracks))
+
+
+def test_match_audio_follows_language_not_stream_index():
+    prev = audio(Track(1, "ac3", "eng", default=True), Track(2, "aac", "rus", "Дубляж"))
+    nxt = audio(Track(1, "ac3", "eng", default=True), Track(3, "aac", "rus", "Дубляж"))
+    assert media.match_audio(prev, 2, nxt) == 3
+
+
+def test_match_audio_prefers_the_same_dub_among_one_language():
+    prev = audio(Track(1, "aac", "rus", "MVO", default=True), Track(2, "aac", "rus", "Дубляж"))
+    nxt = audio(Track(1, "aac", "rus", "MVO", default=True), Track(2, "aac", "rus", "Дубляж"))
+    assert media.match_audio(prev, 2, nxt) == 2
+    assert media.match_audio(prev, 1, nxt) is None  # the default needs no explicit track
+
+
+def test_match_audio_keeps_the_language_when_the_default_changes():
+    # Heard the default (Russian) before; the next file defaults to English.
+    prev = audio(Track(1, "aac", "rus", default=True), Track(2, "aac", "eng"))
+    nxt = audio(Track(1, "aac", "eng", default=True), Track(2, "aac", "rus"))
+    assert media.match_audio(prev, None, nxt) == 2
+
+
+def test_match_audio_title_outweighs_codec_and_channels():
+    prev = audio(Track(1, "ac3", "rus", "LostFilm", 6, default=True), Track(2, "aac", "eng"))
+    nxt = audio(Track(1, "ac3", "rus", "Дубляж", 6, default=True),
+                Track(2, "aac", "rus", "LostFilm", 2))
+    assert media.match_audio(prev, 1, nxt) == 2
+
+
+def test_match_audio_falls_back_to_default_without_that_language():
+    prev = audio(Track(1, "aac", "eng", default=True), Track(2, "aac", "ukr"))
+    nxt = audio(Track(1, "aac", "eng", default=True))
+    assert media.match_audio(prev, 2, nxt) is None
+
+
+def subs(*tracks):
+    return probe(subtitles=list(tracks))
+
+
+def test_match_sub_by_language_and_variant():
+    forced = SubTrack("e4", "eng · Forced", "eng", variant="Forced")
+    prev = subs(SubTrack("e3", "rus", "rus"), forced, SubTrack("e5", "eng", "eng"))
+    nxt = subs(SubTrack("e2", "rus", "rus"), SubTrack("e6", "eng", "eng"),
+               SubTrack("e7", "eng · Forced", "eng", variant="Forced"))
+    assert media.match_sub(prev, "e5", nxt) == "e6"
+    assert media.match_sub(prev, "e4", nxt) == "e7"
+    assert media.match_sub(prev, None, nxt) is None
+
+
+def test_match_sub_treats_ru_and_rus_as_one_language():
+    prev = subs(SubTrack("x0", "файл: S01E01.ru.srt", "ru", variant="ru"))
+    assert media.match_sub(prev, "x0", subs(SubTrack("e3", "rus", "rus"))) == "e3"
+
+
+def test_match_sub_does_not_swap_full_for_forced():
+    prev = subs(SubTrack("e3", "eng", "eng"))
+    nxt = subs(SubTrack("e4", "eng · Forced", "eng", variant="Forced"),
+               SubTrack("e5", "eng · SDH", "eng", variant="SDH"))
+    assert media.match_sub(prev, "e3", nxt) == "e5"
+
+
+def test_match_sub_keeps_sidecar_files_and_skips_unsupported():
+    prev = subs(SubTrack("x0", "файл: S01E01.ru.srt", "ru", variant="ru"))
+    nxt = subs(SubTrack("e2", "rus · pgs", "rus", supported=False),
+               SubTrack("x0", "файл: S01E02.en.srt", "en", variant="en"),
+               SubTrack("x1", "файл: S01E02.ru.srt", "ru", variant="ru"))
+    assert media.match_sub(prev, "x0", nxt) == "x1"
+    bitmap_only = subs(SubTrack("e2", "rus · pgs", "ru", supported=False))
+    assert media.match_sub(prev, "x0", bitmap_only) is None
+
+
+def test_match_sub_without_language_needs_the_same_kind_of_track():
+    prev = subs(SubTrack("x0", "файл: S01E01.srt"))
+    assert media.match_sub(prev, "x0", subs(SubTrack("e3", "subrip"))) is None
+    assert media.match_sub(prev, "x0", subs(SubTrack("x0", "файл: S01E02.srt"))) == "x0"
+
+
+def test_sidecar_and_embedded_variants_are_probed(tmp_path, monkeypatch):
+    film = tmp_path / "S01E01.mkv"
+    film.touch()
+    (tmp_path / "S01E01.forced.en.srt").touch()
+    out = '{"streams": [{"index": 2, "codec_type": "subtitle", "codec_name": "subrip",' \
+          ' "tags": {"language": "rus", "title": "Forced"}}], "format": {}}'
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: media.subprocess.CompletedProcess(
+        a, 0, stdout=out))
+    p = media.probe(media.Item("v", film, "S01E01.mkv", 0, 1.0))
+    assert [(s.key, s.lang, s.variant) for s in p.subtitles] == [
+        ("e2", "rus", "Forced"), ("x0", "en", "forced.en")]

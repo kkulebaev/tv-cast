@@ -56,6 +56,9 @@ class SubTrack:
     label: str
     lang: str = ""
     supported: bool = True
+    # What tells same-language tracks apart: the stream title ("Forced", "SDH") or the
+    # sidecar's tags ("forced.en" in "Movie.forced.en.srt").
+    variant: str = ""
 
 
 @dataclass
@@ -179,6 +182,76 @@ def sidecar(item: Item, n: int) -> Path | None:
     return subs[n] if 0 <= n < len(subs) else None
 
 
+def _default_audio(p: Probe) -> Track | None:
+    # What the receiver plays when no track is asked for: the flagged one, else the first.
+    return next((a for a in p.audio if a.default), p.audio[0] if p.audio else None)
+
+
+def next_episode(item: Item) -> Item | None:
+    if not item.series:
+        return None
+    if not _library:
+        scan()
+    later = [i for i in _library.values()
+             if i.series == item.series and (i.season, i.episode) > (item.season, item.episode)]
+    if not later:
+        return None
+    first = min((i.season, i.episode) for i in later)
+    copies = [i for i in later if (i.season, i.episode) == first]
+    # With a 720p and a 1080p copy, stay with the release being watched, else take the biggest.
+    return min(copies, key=lambda i: (_release(i) != _release(item), -i.size, i.rel))
+
+
+def _release(item: Item) -> tuple[str, str]:
+    """Folder and file name without the episode code: equal for episodes of one release."""
+    stem = item.path.stem
+    m = _EPISODE.search(stem)
+    return str(Path(item.rel).parent), (stem[:m.start()] + stem[m.end():]) if m else stem
+
+
+def match_audio(prev: Probe, index: int | None, nxt: Probe) -> int | None:
+    """The track in the next episode that matches the one being heard; None is its default.
+
+    Stream indexes differ between episodes, so tracks are matched by language first, then
+    by title, codec and channels."""
+    old = next((a for a in prev.audio if a.index == index), _default_audio(prev))
+    if old is None or not nxt.audio:
+        return None
+    lang = bcp47(old.lang)
+    candidates = [a for a in nxt.audio if bcp47(a.lang) == lang] if lang != "und" else nxt.audio
+    # Ties go to the default track, which keeps direct playback possible.
+    candidates = sorted(candidates, key=lambda a: not a.default)
+
+    def score(a: Track) -> int:
+        # The title names the dub ("LostFilm", "Дубляж") and outweighs codec and channels together.
+        return 3 * (a.title == old.title) + (a.codec == old.codec) + (a.channels == old.channels)
+
+    best = max(candidates, key=score, default=None)
+    return None if best is None or best is _default_audio(nxt) else best.index
+
+
+def match_sub(prev: Probe, key: str | None, nxt: Probe) -> str | None:
+    old = next((s for s in prev.subtitles if s.key == key), None) if key else None
+    if old is None:
+        return None
+    # Sidecar files say "ru" and embedded tracks "rus"; both mean the same language.
+    lang = bcp47(old.lang)
+    candidates = [s for s in nxt.subtitles if s.supported and bcp47(s.lang) == lang]
+    forced = "forced" in old.variant.lower()
+
+    def score(s: SubTrack) -> int:
+        # Forced subtitles only cover foreign lines: swapping them for full ones (or back) is
+        # worse than a different file kind.
+        return (2 * (s.key[0] == old.key[0]) + 2 * (s.variant == old.variant)
+                - 3 * (("forced" in s.variant.lower()) != forced))
+
+    best = max(candidates, key=score, default=None)
+    # Without a language tag only a track of the same kind and variant is a safe guess.
+    if best is None or (lang == "und" and score(best) < 4):
+        return None
+    return best.key
+
+
 def bcp47(lang: str) -> str:
     lang = lang.lower()
     if lang in _LANGS:
@@ -226,12 +299,13 @@ def probe(item: Item) -> Probe:
             codec = s.get("codec_name", "?")
             subs.append(SubTrack(
                 key=f"e{s['index']}",
-                label=" · ".join(x for x in (lang, title, codec) if x),
+                label=" · ".join(x for x in (lang, title, codec) if x), variant=title,
                 lang=lang, supported=codec in TEXT_SUBS,
             ))
     for n, p in enumerate(_sidecar_subs(item.path)):
         subs.append(SubTrack(key=f"x{n}", label=f"файл: {p.name}",
-                             lang=_sidecar_lang(p, item.path)))
+                             lang=_sidecar_lang(p, item.path),
+                             variant=p.name[len(item.path.stem) + 1 : -len(p.suffix)]))
 
     result = Probe(
         duration=float(data.get("format", {}).get("duration") or 0),
@@ -262,7 +336,7 @@ def plan(p: Probe, audio_index: int | None, force_transcode: bool = False) -> tu
                else f"видео {p.video_codec} {p.video_profile}".strip())
         hdr = ", HDR → SDR" if p.color_transfer in HDR_TRANSFERS else ""
         return "transcode", f"{why} → H.264 через VAAPI{hdr}"
-    default_audio = next((a for a in p.audio if a.default), p.audio[0] if p.audio else None)
+    default_audio = _default_audio(p)
     chosen = next((a for a in p.audio if a.index == audio_index), default_audio)
     # ffprobe reports .mkv and .webm identically; only VP8/VP9 means a real WebM.
     direct_container = p.format_name == MP4_FORMAT or (
