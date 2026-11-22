@@ -20,7 +20,7 @@
            border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 3; }
   header h1 { font-size: 17px; margin: 0; font-weight: 600; white-space: nowrap; cursor: pointer; }
   .sp { flex: 1; }
-  select, input[type=search], button {
+  select, input[type=search], input[type=text], button {
     font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
     border-radius: 8px; padding: 7px 12px; }
   #device { max-width: 16rem; min-width: 0; text-overflow: ellipsis; }
@@ -28,7 +28,7 @@
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   button:disabled, input:disabled { opacity: .45; cursor: default; }
-  @media (pointer: coarse) { button, select, input[type=search] { min-height: 44px; } }
+  @media (pointer: coarse) { button, select, input[type=search], input[type=text] { min-height: 44px; } }
   input[type=range] { accent-color: var(--accent); }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
@@ -175,6 +175,11 @@
       </select>
       <button id="layout" title="Сетка или список"></button>
     </div>
+    <form id="twitch" class="toolbar">
+      <input id="tw" type="text" aria-label="Twitch-канал" list="twrecent" placeholder="Twitch-канал или ссылка" autocomplete="off" enterkeyhint="go">
+      <datalist id="twrecent"></datalist>
+      <button class="primary">▶︎ Twitch</button>
+    </form>
     <section id="shelfwrap" hidden><h3>Продолжить просмотр</h3><div id="shelf"></div></section>
     <section><h3 id="libtitle">Библиотека</h3><div id="lib" class="grid"></div></section>
   </div>
@@ -246,7 +251,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;",
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 const narrow = () => matchMedia("(max-width: 760px)").matches;
-const MODES = {direct: "напрямую", remux: "пересборка", transcode: "перекодирование"};
+const MODES = {direct: "напрямую", remux: "пересборка", transcode: "перекодирование", live: "Twitch"};
 
 function toast(msg, kind = "") {
   const el = document.createElement("div");
@@ -553,6 +558,29 @@ async function startPlay(id, start, tracks = {}) {
 }
 // On a phone the remote is what one wants next; on a computer the bar at the bottom is enough.
 const afterPlay = () => narrow() ? go({item: null, remote: true}, !!route.item) : route.item && back();
+const recentChannels = () => load("tvcast.twitch", []);
+const renderChannels = () => $("#twrecent").innerHTML = recentChannels().map(c => '<option value="' + esc(c) + '">').join("");
+$("#twitch").onsubmit = async e => {
+  e.preventDefault();
+  const channel = $("#tw").value.trim(), btn = $("#twitch button");
+  if (!channel) return $("#tw").focus();
+  if (!device()) { toast("Телевизор не найден", "bad"); return; }
+  btn.disabled = true;
+  // The server waits for the first segments before casting, which takes 5–15 s.
+  toast("Жду поток twitch.tv/" + channel + "…");
+  try {
+    const r = await api("/api/live", {device: device(), channel});
+    if (r.started) {
+      store("tvcast.twitch", [r.channel, ...recentChannels().filter(c => c !== r.channel)].slice(0, 8));
+      renderChannels();
+      $("#tw").value = "";
+      $("#tw").blur();
+      afterPlay();
+    }
+  } catch (err) { toast(err.message, "bad"); }
+  finally { btn.disabled = false; }
+};
+renderChannels();
 async function playSelected(start) { if (await startPlay(selected.id, start, chosenTracks())) afterPlay(); }
 // A new episode goes on with the dub and subtitles of the latest earlier one played from here.
 function inheritedTracks(i) {
@@ -575,7 +603,7 @@ function sendSeek(target) {
   ctl("seek", target);
 }
 function seekBy(delta) {
-  if (!st?.state || st.state === "UNKNOWN") return;
+  if (!st?.state || st.state === "UNKNOWN" || st.session?.channel) return;
   pendingSeek = Math.max(0, Math.min((st.duration || Infinity) - 5, curPos() + delta));
   showTime(pendingSeek);
   clearTimeout(seekTimer);
@@ -634,6 +662,12 @@ function renderTracks(s) {
 }
 
 function showTime(pos) {
+  if (st?.session?.channel) {
+    $$(".pos").forEach(el => el.textContent = "● в эфире");
+    $$(".dur").forEach(el => el.textContent = "");
+    $("#bartime").textContent = "● в эфире · Twitch";
+    return;
+  }
   const dur = st?.duration || 0;
   $$(".pos").forEach(el => el.textContent = fmt(pos));
   $$(".dur").forEach(el => el.textContent = dur ? "−" + fmt(dur - pos) : "0:00");
@@ -651,8 +685,9 @@ function renderPlayer() {
   if (seekTarget != null && Math.abs((st?.position || 0) - seekTarget) < 5) seekTarget = null;
   if (volTarget != null && Math.abs((st?.volume ?? -1) - volTarget) < .01) volTarget = null;
   const pos = curPos();
+  $$("[data-act=back], [data-act=fwd]").forEach(b => b.hidden = !!s?.channel);
   $$(".seek").forEach(el => {
-    el.disabled = !active;
+    el.disabled = !active || !!s?.channel;
     el.max = Math.floor(st?.duration || 0);
     if (!dragging) el.value = Math.floor(pos);
   });

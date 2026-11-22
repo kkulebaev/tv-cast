@@ -30,6 +30,8 @@ class Settings:
         default_factory=lambda: os.environ.get("TVCAST_AUTOPLAY", "1").lower()
         not in ("0", "false", "no", "off")
     )
+    # Which TV `tvcast twitch` picks when several are on; matched against name, model or IP.
+    tv: str = field(default_factory=lambda: os.environ.get("TVCAST_TV", ""))
     vaapi_device: str = field(
         default_factory=lambda: os.environ.get("TVCAST_VAAPI", "/dev/dri/renderD128")
     )

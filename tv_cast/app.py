@@ -15,11 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import media, posters, progress
-from .cast import local_ip_for, manager
+from . import dlna, live, media, posters, progress
+from .cast import lan_ip, manager
+from .cli import twitch as twitch_cli
 from .config import settings
 
 log = logging.getLogger("tvcast")
+renderers = dlna.DlnaManager(lan_ip)
 STATIC = Path(__file__).parent / "static"
 # The receiver may open a stream URL again (or a seek restarts it) before dropping the old
 # connection; one ffmpeg per client and file keeps the GPU from encoding the same film twice.
@@ -30,7 +32,9 @@ _streams: dict[tuple[str, str], asyncio.subprocess.Process] = {}
 async def lifespan(_app: FastAPI):
     settings.media_dir.mkdir(parents=True, exist_ok=True)
     manager.start()
+    renderers.start()
     yield
+    renderers.stop()
     manager.stop()
 
 
@@ -60,9 +64,16 @@ async def index():
     return FileResponse(STATIC / "index.html")
 
 
+def _target(device: str):
+    return renderers if dlna.is_dlna(device) else manager
+
+
 @app.get("/api/devices")
 async def devices():
-    return manager.devices()
+    found = renderers.devices()
+    # SaluteTV announces Cast too but never accepts the connection; its DLNA side works.
+    hosts = {d["host"] for d in found}
+    return [d for d in manager.devices() if d["connected"] or d["host"] not in hosts] + found
 
 
 @app.get("/api/library")
@@ -138,6 +149,8 @@ def _carry_tracks(like: media.Item, audio: int | None, sub: str | None, item: me
 
 @app.post("/api/play")
 async def play(req: PlayRequest):
+    if dlna.is_dlna(req.device):
+        raise HTTPException(422, "на этот телевизор можно отправить только Twitch")
     item = _item(req.item)
     audio, sub = req.audio, req.sub
     if req.like and req.like != req.item and (like := media.get(req.like)):
@@ -151,6 +164,38 @@ async def play(req: PlayRequest):
     return {"mode": s.mode, "reason": s.reason}
 
 
+class LiveRequest(BaseModel):
+    device: str
+    channel: str
+    quality: str = "best"
+
+
+@app.post("/api/live")
+async def play_live(req: LiveRequest):
+    try:
+        channel = live.channel_name(req.channel)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    try:
+        s = await run_in_threadpool(_target(req.device).play_live, req.device, channel,
+                                    req.quality)
+    except KeyError as e:
+        raise HTTPException(404, "телевизор не найден") from e
+    except RuntimeError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"channel": channel, "started": s is not None}
+
+
+@app.get("/live/{key}/{name}")
+async def live_file(key: str, name: str):
+    path = manager.live_file(key, name) or renderers.live_file(key, name)
+    if path is None:
+        raise HTTPException(404, "нет такого потока")
+    media_type = "application/vnd.apple.mpegurl" if name == live.PLAYLIST else "video/mp2t"
+    # The playlist is rewritten every 2 s; a cached copy freezes the picture on the TV.
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
 class ControlRequest(BaseModel):
     device: str
     action: str
@@ -160,7 +205,7 @@ class ControlRequest(BaseModel):
 @app.post("/api/control")
 async def control(req: ControlRequest):
     try:
-        await run_in_threadpool(manager.control, req.device, req.action, req.value)
+        await run_in_threadpool(_target(req.device).control, req.device, req.action, req.value)
     except KeyError as e:
         raise HTTPException(404, "телевизор не найден") from e
     except ValueError as e:
@@ -173,7 +218,7 @@ async def control(req: ControlRequest):
 @app.get("/api/status/{device}")
 async def status(device: str):
     try:
-        return await run_in_threadpool(manager.status, device)
+        return await run_in_threadpool(_target(device).status, device)
     except KeyError as e:
         raise HTTPException(404, "телевизор не найден") from e
 
@@ -290,17 +335,6 @@ async def subs(request: Request, item_id: str, key: str, start: float = 0.0):
     return Response(vtt, media_type="text/vtt; charset=utf-8")
 
 
-def _lan_ip() -> str | None:
-    # Routing toward a known TV rather than the internet keeps the VPN tunnel address
-    # out of the answer: only the LAN address is reachable from the phone and the TV.
-    for host in [*settings.known_hosts, "192.168.0.1"]:
-        try:
-            return local_ip_for(host)
-        except OSError:
-            continue
-    return None
-
-
 def _banner(lan_ip: str | None) -> str:
     # Escape codes in a redirected log or under systemd turn into garbage; NO_COLOR is
     # the common convention for turning colors off (https://no-color.org).
@@ -334,8 +368,10 @@ def _banner(lan_ip: str | None) -> str:
 
 
 def main():
+    if sys.argv[1:2] == ["twitch"]:
+        return twitch_cli(sys.argv[2:])
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    print(_banner(_lan_ip()), flush=True)
+    print(_banner(lan_ip()), flush=True)
     uvicorn.run(app, host="0.0.0.0", port=settings.port, log_level="warning")
 
 

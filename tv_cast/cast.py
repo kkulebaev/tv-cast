@@ -8,12 +8,14 @@ from urllib.parse import quote
 import pychromecast
 from pychromecast.config import APP_MEDIA_RECEIVER
 from pychromecast.controllers.media import (
+    METADATA_TYPE_GENERIC,
     METADATA_TYPE_MOVIE,
     STREAM_TYPE_BUFFERED,
+    STREAM_TYPE_LIVE,
     MediaStatusListener,
 )
 
-from . import media, progress
+from . import live, media, progress
 from .config import settings
 
 log = logging.getLogger("tvcast.cast")
@@ -39,6 +41,8 @@ class Session:
     last_pos: float = 0.0
     error: str | None = None
     started_at: float = field(default_factory=time.time)
+    # Set for a Twitch channel: no file behind it, so no position, no "watched", no next episode.
+    channel: str | None = None
 
 
 @dataclass
@@ -89,6 +93,17 @@ def local_ip_for(host: str) -> str:
         return s.getsockname()[0]
 
 
+def lan_ip() -> str | None:
+    # Routing toward a known TV rather than the internet keeps the VPN tunnel address
+    # out of the answer: only the LAN address is reachable from the phone and the TV.
+    for host in [*settings.known_hosts, "192.168.0.1"]:
+        try:
+            return local_ip_for(host)
+        except OSError:
+            continue
+    return None
+
+
 class CastManager:
     def __init__(self):
         self._casts: dict[str, pychromecast.Chromecast] = {}
@@ -103,6 +118,7 @@ class CastManager:
         self.errors: dict[str, str] = {}
         # The episode that just ended, so "next" still works once its session is gone.
         self.finished: dict[str, Session] = {}
+        self.lives: dict[str, live.Stream] = {}
 
     def start(self):
         self._browser = pychromecast.get_chromecasts(
@@ -117,6 +133,41 @@ class CastManager:
             for uuid in list(self.sessions):
                 self.save(uuid, flush=False)
             self.save(None)
+            for uuid, stream in list(self.lives.items()):
+                if not stream.alive:
+                    self._live_ended(uuid, stream)
+
+    def _drop_live(self, uuid: str):
+        with self._lock:
+            stream = self.lives.pop(uuid, None)
+        if stream:
+            stream.stop()
+
+    def _live_ended(self, uuid: str, stream: live.Stream):
+        with self._lock:
+            if self.lives.get(uuid) is not stream:
+                return
+            del self.lives[uuid]
+            session = self.sessions.get(uuid)
+            on_tv = session is not None and session.url.endswith(f"/{stream.key}/{live.PLAYLIST}")
+            if on_tv:
+                del self.sessions[uuid]
+                self.errors[uuid] = f"трансляция twitch.tv/{stream.channel} закончилась"
+            cast = self._casts.get(uuid)
+        stream.stop()
+        log.info("twitch.tv/%s ended on %s", stream.channel, uuid)
+        if cast is not None and on_tv:
+            # The receiver would otherwise sit on the last frame, buffering forever.
+            try:
+                cast.media_controller.stop()
+                cast.quit_app()
+            except Exception:
+                log.exception("could not stop %s after the stream ended", uuid)
+
+    def live_file(self, key: str, name: str):
+        with self._lock:
+            stream = next((s for s in self.lives.values() if s.key == key), None)
+        return stream.file(name) if stream else None
 
     def save(self, uuid: str | None, flush: bool = True):
         # Saving is a side effect: a full disk or a flaky TV must not break playback control
@@ -157,6 +208,8 @@ class CastManager:
             return self._play_locks.setdefault(uuid, threading.Lock())
 
     def on_finished(self, uuid: str, session: Session, current_time: float | None = None):
+        if session.channel:
+            return
         # Kept even for a stream that broke off: "next" is still a fair request then.
         self.finished[uuid] = session
         pos = max(session.last_pos, session.offset + (current_time or 0))
@@ -243,7 +296,7 @@ class CastManager:
         session = self.sessions.get(uuid)
         with self._lock:
             cast = self._casts.get(uuid)
-        if session is None or cast is None:
+        if session is None or cast is None or session.channel:
             return
         ms = cast.media_controller.status
         # Between a seek and the new load the receiver still reports the old URL's clock.
@@ -259,6 +312,8 @@ class CastManager:
         for uuid in list(self.sessions):
             self.save(uuid, flush=False)
         self.save(None)
+        for uuid in list(self.lives):
+            self._drop_live(uuid)
         if self._browser:
             self._browser.stop_discovery()
         for cast in self._casts.values():
@@ -284,6 +339,7 @@ class CastManager:
                 "name": c.cast_info.friendly_name,
                 "model": c.cast_info.model_name,
                 "host": c.cast_info.host,
+                "connected": c.socket_client.is_connected,
             }
             for uuid, c in casts
         ]
@@ -292,8 +348,11 @@ class CastManager:
         # Listener callbacks run on pychromecast's thread; a play() that just stored a new
         # session must not lose it to a stale check.
         with self._lock:
-            if self.sessions.get(uuid) is session:
+            ended = self.sessions.get(uuid) is session
+            if ended:
                 del self.sessions[uuid]
+        if ended and session.channel:
+            self._drop_live(uuid)
 
     def get(self, uuid: str) -> pychromecast.Chromecast:
         with self._lock:
@@ -365,6 +424,7 @@ class CastManager:
             # Whatever ended before is no longer what "next" or the player's notes are about.
             self.finished.pop(uuid, None)
             self.errors.pop(uuid, None)
+        self._drop_live(uuid)
         log.info("play %s on %s: %s (%s) %s", item.rel, uuid, mode, reason, url)
 
         mc = cast.media_controller
@@ -379,6 +439,56 @@ class CastManager:
         )
         mc.block_until_active(timeout=20)
         return session
+
+    def play_live(self, uuid: str, channel: str, quality: str = "best") -> Session | None:
+        """Waits for the first segments before casting, so it can take tens of seconds; a play
+        or stop meanwhile cancels it (None)."""
+        gen = self._bump(uuid)
+        with self._play_lock(uuid):
+            cast = self.get(uuid)
+            if uuid in self.sessions:
+                self.save(uuid)
+            stream = live.Stream(channel, quality)
+            try:
+                stream.start()
+                ready = stream.wait_ready(lambda: self._gen.get(uuid, 0) != gen)
+            except Exception:
+                stream.stop()
+                raise
+            base = f"http://{local_ip_for(cast.cast_info.host)}:{settings.port}"
+            url = f"{base}/live/{stream.key}/{live.PLAYLIST}"
+            session = Session(
+                item_id="", title=channel, mode="live", reason=f"twitch.tv/{channel} · {quality}",
+                audio_index=None, sub_key=None, force_transcode=False, duration=0.0, url=url,
+                channel=channel,
+            )
+            with self._lock:
+                old = None
+                if ready and self._gen.get(uuid, 0) == gen:
+                    old = self.lives.pop(uuid, None)
+                    self.lives[uuid] = stream
+                    self.sessions[uuid] = session
+                    self.finished.pop(uuid, None)
+                    self.errors.pop(uuid, None)
+                else:
+                    ready = False
+            if not ready:
+                log.info("not starting twitch.tv/%s: superseded on %s", channel, uuid)
+                stream.stop()
+                return None
+            if old:
+                old.stop()
+            log.info("live twitch.tv/%s (%s) on %s: %s", channel, quality, uuid, url)
+            mc = cast.media_controller
+            mc.play_media(
+                url, "application/x-mpegURL",
+                title=channel,
+                stream_type=STREAM_TYPE_LIVE,
+                metadata={"metadataType": METADATA_TYPE_GENERIC, "title": channel,
+                          "subtitle": "Twitch"},
+            )
+            mc.block_until_active(timeout=20)
+            return session
 
     def control(self, uuid: str, action: str, value: float | None = None):
         cast = self.get(uuid)
@@ -399,8 +509,11 @@ class CastManager:
                     # Otherwise the receiver lingers on its idle cast screen for minutes.
                     cast.quit_app()
                     self.sessions.pop(uuid, None)
+                self._drop_live(uuid)
             case "seek":
                 target = max(0.0, float(value or 0))
+                if session and session.channel:
+                    return
                 if session and session.mode != "direct":
                     # A piped stream has no byte ranges to seek in: restart ffmpeg there.
                     item = media.get(session.item_id)
@@ -484,6 +597,7 @@ class CastManager:
                 "sub_key": session.sub_key,
                 "transcode": session.force_transcode,
                 "error": session.error,
+                "channel": session.channel,
             },
         }
 
