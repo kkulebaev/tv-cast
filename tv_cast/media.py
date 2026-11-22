@@ -175,7 +175,8 @@ def video_ok(p: Probe) -> bool:
 
 def plan(p: Probe, audio_index: int | None, force_transcode: bool = False) -> tuple[Mode, str]:
     if force_transcode or not video_ok(p):
-        why = "принудительно" if force_transcode else f"видео {p.video_codec} {p.video_profile}".strip()
+        why = ("принудительно" if force_transcode
+               else f"видео {p.video_codec} {p.video_profile}".strip())
         return "transcode", f"{why} → H.264 через VAAPI"
     default_audio = next((a for a in p.audio if a.default), p.audio[0] if p.audio else None)
     chosen = next((a for a in p.audio if a.index == audio_index), default_audio)
@@ -184,7 +185,9 @@ def plan(p: Probe, audio_index: int | None, force_transcode: bool = False) -> tu
         p.format_name == WEBM_FORMAT and p.video_codec in {"vp8", "vp9"}
     )
     # The receiver always plays the file's default audio track, so another one needs a remux.
-    if direct_container and (chosen is None or (chosen.codec in CAST_AUDIO and chosen is default_audio)):
+    if direct_container and (
+        chosen is None or (chosen.codec in CAST_AUDIO and chosen is default_audio)
+    ):
         return "direct", "файл подходит как есть"
     reasons = []
     if not direct_container:
