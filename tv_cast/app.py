@@ -186,7 +186,8 @@ async def stream(request: Request, item_id: str, mode: str = "remux",
         probe = await run_in_threadpool(media.probe, item)
     except Exception as e:
         raise HTTPException(422, f"ffprobe не смог прочитать файл: {e}") from e
-    cmd = media.ffmpeg_stream_cmd(item, probe, mode, audio, start)
+    # May run a trial ffmpeg once (media.gpu_tonemap), which must not stall the event loop.
+    cmd = await run_in_threadpool(media.ffmpeg_stream_cmd, item, probe, mode, audio, start)
     log.info("ffmpeg: %s", " ".join(cmd))
     client = request.client.host if request.client else ""
     return StreamingResponse(_pipe(cmd, request, (client, item.id)), media_type="video/mp4")

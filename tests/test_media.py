@@ -40,13 +40,30 @@ def test_plan_mode(kw, audio, force, mode):
     assert media.plan(probe(**kw), audio, force)[0] == mode
 
 
+def test_plan_mentions_hdr_tonemapping():
+    _, reason = media.plan(probe(color_transfer="smpte2084"), None, force_transcode=True)
+    assert "HDR → SDR" in reason
+
+
 @pytest.fixture
 def no_vaapi(monkeypatch):
     monkeypatch.setattr(media, "settings", replace(settings, vaapi_device="/nonexistent"))
 
 
+@pytest.fixture
+def vaapi(monkeypatch, tmp_path):
+    dev = tmp_path / "renderD128"
+    dev.touch()
+    monkeypatch.setattr(media, "settings", replace(settings, vaapi_device=str(dev)))
+    return dev
+
+
 def item(path="/m/film.mkv") -> media.Item:
     return media.Item("id", Path(path), "film.mkv", 1, 0.0)
+
+
+def vf(cmd: list[str]) -> str:
+    return cmd[cmd.index("-vf") + 1]
 
 
 def test_remux_copies_video_and_converts_audio(no_vaapi):
@@ -62,6 +79,31 @@ def test_remux_tags_hevc_as_hvc1(no_vaapi):
     cmd = media.ffmpeg_stream_cmd(item(), probe(video_codec="hevc"), "remux", None, 0)
     assert "hvc1" in cmd
     assert "-ss" not in cmd
+
+
+def test_transcode_sdr_decodes_on_gpu_with_software_fallback(vaapi):
+    cmd = media.ffmpeg_stream_cmd(item(), probe(), "transcode", None, 0)
+    assert cmd.index("-hwaccel") < cmd.index("-i")
+    assert vf(cmd) == "format=nv12|vaapi,hwupload,scale_vaapi=format=nv12"
+    assert "h264_vaapi" in cmd
+    assert "-color_trc" not in cmd
+
+
+def test_transcode_hdr_uses_libplacebo_on_gpu(vaapi, monkeypatch):
+    monkeypatch.setattr(media, "gpu_tonemap", lambda: True)
+    cmd = media.ffmpeg_stream_cmd(item(), probe(color_transfer="smpte2084"), "transcode", None, 0)
+    assert cmd.index("-hwaccel") < cmd.index("-i")
+    assert vf(cmd).startswith("libplacebo=") and vf(cmd).endswith(",hwupload")
+    assert cmd[cmd.index("-color_trc") + 1] == "bt709"
+
+
+def test_transcode_hdr_without_vulkan_tonemaps_on_cpu(vaapi, monkeypatch):
+    monkeypatch.setattr(media, "gpu_tonemap", lambda: False)
+    hlg = probe(color_transfer="arib-std-b67")
+    cmd = media.ffmpeg_stream_cmd(item(), hlg, "transcode", None, 0)
+    # zscale can't take VAAPI frames, so decoding has to stay in software.
+    assert "-hwaccel" not in cmd
+    assert "tonemap=tonemap=hable" in vf(cmd)
 
 
 def test_transcode_without_vaapi_uses_libx264(no_vaapi):

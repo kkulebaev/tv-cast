@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import json
 import os
@@ -23,6 +24,8 @@ CAST_VIDEO = {"h264", "hevc", "vp8", "vp9"}
 CAST_AUDIO = {"aac", "mp3", "opus", "vorbis", "flac"}
 # Bitmap subtitles (PGS, VobSub) can't become WebVTT without OCR.
 TEXT_SUBS = {"subrip", "ass", "ssa", "webvtt", "mov_text", "text"}
+HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+_TO_BT709 = "colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"
 _SUB_KEY = re.compile(r"[ex][0-9]+")
 # The receiver wants BCP 47 codes, while ffprobe reports ISO 639-2 ones.
 _LANGS = {
@@ -64,6 +67,7 @@ class Probe:
     pix_fmt: str
     width: int
     height: int
+    color_transfer: str = ""
     audio: list[Track] = field(default_factory=list)
     subtitles: list[SubTrack] = field(default_factory=list)
 
@@ -186,6 +190,7 @@ def probe(item: Item) -> Probe:
         pix_fmt=video.get("pix_fmt", ""),
         width=video.get("width", 0),
         height=video.get("height", 0),
+        color_transfer=video.get("color_transfer", ""),
         audio=audio,
         subtitles=subs,
     )
@@ -204,7 +209,8 @@ def plan(p: Probe, audio_index: int | None, force_transcode: bool = False) -> tu
     if force_transcode or not video_ok(p):
         why = ("принудительно" if force_transcode
                else f"видео {p.video_codec} {p.video_profile}".strip())
-        return "transcode", f"{why} → H.264 через VAAPI"
+        hdr = ", HDR → SDR" if p.color_transfer in HDR_TRANSFERS else ""
+        return "transcode", f"{why} → H.264 через VAAPI{hdr}"
     default_audio = next((a for a in p.audio if a.default), p.audio[0] if p.audio else None)
     chosen = next((a for a in p.audio if a.index == audio_index), default_audio)
     # ffprobe reports .mkv and .webm identically; only VP8/VP9 means a real WebM.
@@ -226,12 +232,57 @@ def plan(p: Probe, audio_index: int | None, force_transcode: bool = False) -> tu
     return "remux", ", ".join(reasons) + " → видео без перекодирования, звук в AAC"
 
 
+@functools.cache
+def gpu_tonemap() -> bool:
+    """libplacebo needs a working Vulkan driver, and only a trial run can tell."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=64x64:d=0.04",
+             "-vf", f"libplacebo={_TO_BT709}", "-f", "null", "-"],
+            capture_output=True, check=False, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+def _transcode_video(p: Probe, vaapi: bool) -> list[str]:
+    hdr = p.color_transfer in HDR_TRANSFERS
+    filters = []
+    if hdr:
+        # An 8-bit H.264 stream still tagged PQ/HLG shows washed-out colors on the TV.
+        filters.append(
+            f"libplacebo=tonemapping=auto:{_TO_BT709}:format=nv12" if gpu_tonemap()
+            else "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+                 "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=nv12"
+        )
+    if vaapi:
+        # Codecs the GPU can't decode (H.264 High 10, MPEG-4 ASP) fall back to software
+        # frames, so the graph has to accept both kinds; hwupload passes VAAPI frames through.
+        if hdr:
+            filters.append("hwupload")
+        else:
+            filters += ["format=nv12|vaapi", "hwupload", "scale_vaapi=format=nv12"]
+        out = ["-vf", ",".join(filters), "-c:v", "h264_vaapi", "-qp", "21"]
+    else:
+        out = (["-vf", ",".join(filters)] if filters else []) + [
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p"]
+    if hdr:
+        out += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+    return out
+
+
 def ffmpeg_stream_cmd(
     item: Item, p: Probe, mode: Mode, audio_index: int | None, start: float
 ) -> list[str]:
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
-    if mode == "transcode" and Path(settings.vaapi_device).exists():
+    vaapi = mode == "transcode" and Path(settings.vaapi_device).exists()
+    if vaapi:
         cmd += ["-init_hw_device", f"vaapi=va:{settings.vaapi_device}", "-filter_hw_device", "va"]
+        # The zscale fallback is software-only and can't take VAAPI frames.
+        if p.color_transfer not in HDR_TRANSFERS or gpu_tonemap():
+            cmd += ["-hwaccel", "vaapi", "-hwaccel_device", "va",
+                    "-hwaccel_output_format", "vaapi"]
     if start > 0:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", str(item.path), "-map", "0:V:0"]
@@ -243,10 +294,7 @@ def ffmpeg_stream_cmd(
         cmd += ["-map", f"0:{chosen.index}"]
 
     if mode == "transcode":
-        if Path(settings.vaapi_device).exists():
-            cmd += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "21"]
-        else:
-            cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p"]
+        cmd += _transcode_video(p, vaapi)
     else:
         cmd += ["-c:v", "copy"]
         if p.video_codec == "hevc":
