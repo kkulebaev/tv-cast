@@ -5,6 +5,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -111,6 +112,30 @@ def test_library_and_progress_api(monkeypatch, tmp_path):
     assert post(pos=300, only_if_new=True).json()["watched"] is True
     # Both at once: the explicit mark wins over the position's implied "still watching".
     assert post(pos=300, watched=True).json() == {**post().json(), "watched": True}
+
+
+def test_play_matches_tracks_picked_in_another_episode(monkeypatch, tmp_path):
+    monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
+    monkeypatch.setattr(app, "settings", replace(settings, media_dir=tmp_path))
+    for name in ("Dark.S01E01.mkv", "Dark.S01E02.mkv"):
+        (tmp_path / name).touch()
+    client = TestClient(app.app)
+    ids = {i["episode"]: i["id"] for i in client.get("/api/library").json()["items"]}
+    monkeypatch.setattr(media, "probe", lambda item: item.id)
+    monkeypatch.setattr(media, "match_audio", lambda prev, index, nxt: ("audio", prev, index, nxt))
+    monkeypatch.setattr(media, "match_sub", lambda prev, key, nxt: ("sub", prev, key, nxt))
+    calls = []
+
+    def fake_play(*args):
+        calls.append(args)
+        return SimpleNamespace(mode="remux", reason="")
+
+    monkeypatch.setattr(app.manager, "play", fake_play)
+    body = {"device": "tv", "item": ids[2], "audio": 3, "sub": "s:1"}
+    assert client.post("/api/play", json={**body, "like": ids[1]}).status_code == 200
+    assert client.post("/api/play", json=body).status_code == 200
+    assert calls[0][2:4] == (("audio", ids[1], 3, ids[2]), ("sub", ids[1], "s:1", ids[2]))
+    assert calls[1][2:4] == (3, "s:1")
 
 
 def test_poster_endpoint_revalidates_and_404s(monkeypatch, tmp_path):

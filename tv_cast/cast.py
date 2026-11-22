@@ -482,6 +482,7 @@ class CastManager:
                 "reason": session.reason,
                 "audio_index": session.audio_index,
                 "sub_key": session.sub_key,
+                "transcode": session.force_transcode,
                 "error": session.error,
             },
         }

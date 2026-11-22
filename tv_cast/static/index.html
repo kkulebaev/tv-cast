@@ -2,167 +2,361 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
 <title>TV Cast</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
 <style>
   :root {
-    --bg: #0f1115; --panel: #171a21; --line: #262a33; --text: #e7e9ee; --muted: #8b91a0;
+    --bg: #0f1115; --panel: #171a21; --panel2: #1f232c; --line: #262a33; --text: #e7e9ee; --muted: #8b91a0;
     --accent: #5b9dff; --ok: #3ecf8e; --warn: #f5b74f; --bad: #ff6b6b; --radius: 10px;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; gap: 12px; align-items: center; padding: 14px 20px;
-           border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
-  header .sp { flex: 1; }
+  body.locked { overflow: hidden; }
+  header { display: flex; gap: 10px; align-items: center; padding: 12px 20px;
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 3; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; white-space: nowrap; cursor: pointer; }
+  .sp { flex: 1; }
   select, input[type=search], button {
     font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
-    border-radius: 8px; padding: 7px 10px; }
+    border-radius: 8px; padding: 7px 12px; }
+  #device { max-width: 16rem; min-width: 0; text-overflow: ellipsis; }
   button { cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  button:disabled { opacity: .45; cursor: default; }
-  main { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.2fr);
-         gap: 16px; padding: 16px 20px 140px; max-width: 1200px; margin: 0 auto; }
-  @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 12px 16px 170px; } }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
-  #lib { padding: 10px; }
-  #lib input { width: 100%; margin-bottom: 8px; }
-  #list { list-style: none; margin: 0; padding: 0; max-height: 65vh; overflow: auto; }
-  #list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
-  #list li:hover { background: #1f232c; }
-  #list li.sel { background: #22304a; }
-  #list .t { font-weight: 500; }
-  #list .m { color: var(--muted); font-size: 12px; }
-  #list li.group .t { font-weight: 600; }
-  #list li[data-id], #list li.group { display: flex; gap: 10px; align-items: center; }
-  #list .info { flex: 1; min-width: 0; }
-  .thumb { width: 6rem; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px;
-           background: #0b0d11; flex: none; }
-  .hero { display: block; width: 100%; max-height: 16rem; object-fit: contain; background: #0b0d11;
-          border-radius: 8px; margin-bottom: 14px; }
-  #list li.ep { padding-left: 28px; }
-  .mark { float: right; color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
-  .mark.done { color: var(--ok); }
-  .empty { color: var(--muted); padding: 18px 10px; }
+  button:disabled, input:disabled { opacity: .45; cursor: default; }
+  @media (pointer: coarse) { button, select, input[type=search] { min-height: 44px; } }
+  input[type=range] { accent-color: var(--accent); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+
+  main { padding: 16px 20px 120px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 760px) { main { padding: 12px 14px 110px; } header { padding: 10px 14px; } }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .toolbar input { flex: 1 1 14rem; min-width: 0; }
+  .chips { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
+  .chips button { border: 0; background: none; padding: 4px 10px; color: var(--muted); }
+  .chips button.on { background: var(--panel2); color: var(--text); }
+  @media (pointer: coarse) { .chips button { min-height: 36px; } }
+  h3 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .empty { color: var(--muted); padding: 18px 4px; }
   .empty code { color: var(--text); }
-  #detail { padding: 18px; }
+  .meta, .m { color: var(--muted); font-size: 13px; }
+
+  #shelfwrap { margin-bottom: 22px; }
+  #shelf { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 6px; }
+  #shelf { scrollbar-width: thin; }
+  @media (pointer: coarse) { #shelf { scrollbar-width: none; } }
+  #shelf .card { flex: none; width: 15rem; scroll-snap-align: start; }
+  @media (max-width: 760px) { #shelf .card { width: 13rem; } }
+
+  .card { cursor: pointer; min-width: 0; border-radius: var(--radius); }
+  .card .t { font-weight: 500; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card:hover .pic img { filter: brightness(1.12); }
+  .pic { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #0b0d11; flex: none; }
+  .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pic .done { position: absolute; top: 6px; right: 6px; background: var(--ok); color: #06130d; font-size: 12px;
+               font-weight: 700; border-radius: 99px; width: 1.4rem; height: 1.4rem; display: grid; place-items: center; }
+  .pic .prog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: #0008; }
+  .pic .prog i { display: block; height: 100%; background: var(--accent); }
+  .pic .play { position: absolute; inset: 0; display: grid; place-items: center; font-size: 2rem; color: #fff;
+               background: #0006; opacity: 0; transition: opacity .15s; }
+  .card:hover .pic .play { opacity: 1; }
+  @media (pointer: coarse) { .pic .play { opacity: .9; background: none; text-shadow: 0 0 12px #000; } }
+  .info-btn { position: absolute; top: 6px; left: 6px; border-radius: 99px; padding: 0; width: 2rem; height: 2rem;
+              min-height: 0 !important; background: #000a; border: 0; font-size: 14px; }
+
+  #lib.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 18px 14px; }
+  @media (max-width: 760px) { #lib.grid { grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: 14px 10px; } }
+  #lib.list { display: flex; flex-direction: column; gap: 2px; }
+  #lib.list .card { display: flex; gap: 12px; align-items: center; padding: 6px; }
+  #lib.list .card:hover { background: var(--panel2); }
+  #lib.list .pic { width: 7rem; }
+  #lib.list .card > div:last-child { min-width: 0; flex: 1; }
+  #lib.list .t { margin-top: 0; }
+  .card.sel .pic { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .back { margin-bottom: 14px; }
+  .shead { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
+  .shead .pic { width: 22rem; max-width: 45%; }
+  .shead h2 { margin: 0 0 4px; font-size: 22px; }
+  .shead .actions { margin-top: 14px; }
+  @media (max-width: 760px) { .shead { flex-direction: column; } .shead .pic { width: 100%; max-width: none; } }
+  .tabs { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 10px; }
+  .tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .eps { list-style: none; margin: 0; padding: 0; }
+  .eps li { display: flex; gap: 12px; align-items: center; padding: 8px; border-radius: 8px; cursor: pointer; }
+  .eps li:hover { background: var(--panel2); }
+  .eps .pic { width: 8.5rem; }
+  .eps .info { flex: 1; min-width: 0; }
+  .eps .t { font-weight: 500; }
+  .eps .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .overlay { position: fixed; inset: 0; background: #000a; z-index: 10; display: flex;
+             align-items: center; justify-content: center; padding: 20px; }
+  .dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; width: 100%;
+            max-width: 40rem; max-height: 100%; overflow: auto; padding: 18px; position: relative;
+            animation: pop .16s ease-out; }
+  @keyframes pop { from { transform: translateY(12px); opacity: 0; } }
+  @media (max-width: 760px) {
+    .overlay { padding: 0; align-items: flex-end; }
+    .dialog { max-width: none; border-radius: 16px 16px 0 0; max-height: 94vh;
+              padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); animation-duration: .22s; }
+    #remote .dialog { max-height: 100vh; height: 100%; border-radius: 0; }
+  }
+  .dhead { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .hero { display: block; width: 100%; max-height: 18rem; object-fit: contain; background: #0b0d11;
+          border-radius: 8px; margin-bottom: 14px; }
   #detail h2 { margin: 0 0 6px; font-size: 19px; }
-  .meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
   .b-direct { background: #173a2c; color: var(--ok); }
   .b-remux { background: #3a3117; color: var(--warn); }
   .b-transcode { background: #3a1d1d; color: var(--bad); }
-  .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; margin: 10px 0; }
-  .row label { color: var(--muted); }
-  .row select { width: 100%; }
+  .row { display: grid; grid-template-columns: 6.5rem 1fr; gap: 8px; align-items: center; margin: 10px 0; }
+  .row > label:first-child { color: var(--muted); }
+  .row select { width: 100%; min-width: 0; }
   .actions { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  #player { position: fixed; left: 0; right: 0; bottom: 0; background: #12151b; border-top: 1px solid var(--line);
-            padding: 10px 20px 14px; }
-  #player .inner { max-width: 1200px; margin: 0 auto; }
-  #player .top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted); }
-  #player .now { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #seek { width: 100%; margin: 8px 0; accent-color: var(--accent); }
-  .ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .ctl .sp { flex: 1; }
-  #vol { width: 120px; accent-color: var(--accent); }
-  #err { color: var(--bad); font-size: 13px; }
+
+  #remote .dialog { max-width: 30rem; display: flex; flex-direction: column; }
+  .rpic { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; background: #0b0d11; }
+  #rtitle { font-size: 19px; margin: 14px 0 2px; }
+  .rseek { width: 100%; margin: 16px 0 4px; }
+  .rtime { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .rctl { display: flex; gap: 14px; justify-content: center; align-items: center; margin: 16px 0 6px; }
+  .rctl button { min-width: 4.5rem; }
+  .rctl .huge { width: 4.5rem; height: 4.5rem; border-radius: 50%; font-size: 1.6rem; background: var(--accent);
+                border-color: var(--accent); color: #fff; }
+  .rvol { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
+  .rvol input { flex: 1; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: auto; padding-top: 14px; }
+  @media (pointer: coarse) { .hint { display: none; } }
+
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: #12151bf2; backdrop-filter: blur(8px);
+         border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  #bar .seek { display: block; width: 100%; margin: 0; height: 14px; }
+  #bar .inner { max-width: 1280px; margin: 0 auto; padding: 4px 20px 10px; display: flex; gap: 8px; align-items: center; }
+  @media (max-width: 760px) { #bar .inner { padding: 4px 12px 8px; } }
+  #barpic { width: 4.5rem; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: #0b0d11; flex: none; }
+  #barinfo { flex: 1; min-width: 0; cursor: pointer; }
+  #now { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #bar .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #bar .vol { display: flex; gap: 6px; align-items: center; }
+  #bar .vol input { width: 7rem; }
+  @media (max-width: 760px) { #bar .wide { display: none !important; } }
+
+  #toasts { position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 20;
+            display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; width: max-content; max-width: 92vw; }
+  .toast { background: #262b36; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px;
+           padding: 9px 14px; box-shadow: 0 6px 24px #0008; transition: opacity .4s, transform .4s; }
+  .toast.bad { border-left-color: var(--bad); } .toast.ok { border-left-color: var(--ok); }
+  .toast.out { opacity: 0; transform: translateY(8px); }
 </style>
 </head>
 <body>
 <header>
-  <h1>📺 TV Cast</h1>
+  <h1 data-home>📺 TV Cast</h1>
   <span class="sp"></span>
+  <span id="conn" class="dot" title="Телевизор не выбран"></span>
   <select id="device" title="Телевизор"><option value="">ищу телевизоры…</option></select>
 </header>
 
 <main>
-  <section id="lib" class="panel">
-    <input id="q" type="search" placeholder="Поиск по названию">
-    <ul id="list"></ul>
-  </section>
-  <section id="detail" class="panel"><div class="empty">Выберите фильм слева.</div></section>
+  <div id="home">
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Поиск по названию  ( / )">
+      <div class="chips" id="filters">
+        <button data-filter="all">Все</button><button data-filter="new">Не смотрел</button><button data-filter="started">В процессе</button>
+      </div>
+      <select id="sort" title="Сортировка">
+        <option value="name">По названию</option><option value="added">Недавно добавленные</option>
+      </select>
+      <button id="layout" title="Сетка или список"></button>
+    </div>
+    <section id="shelfwrap" hidden><h3>Продолжить просмотр</h3><div id="shelf"></div></section>
+    <section><h3 id="libtitle">Библиотека</h3><div id="lib" class="grid"></div></section>
+  </div>
+  <div id="series" hidden></div>
 </main>
 
-<div id="player">
+<div id="sheet" class="overlay" hidden><div class="dialog">
+  <div class="dhead"><button data-close>← Назад</button></div>
+  <div id="detail"></div>
+</div></div>
+
+<div id="remote" class="overlay" hidden><div class="dialog">
+  <div class="dhead"><button data-close>⌄ Свернуть</button><span class="sp"></span><button data-act="stop">■ Стоп</button></div>
+  <img id="rpic" class="rpic" alt="" hidden>
+  <div id="rtitle">Ничего не играет</div>
+  <div class="meta" id="rmode"></div>
+  <input class="seek rseek" type="range" min="0" max="0" step="1" value="0" disabled>
+  <div class="rtime"><span class="pos">0:00</span><span class="ends"></span><span class="dur">0:00</span></div>
+  <div class="rctl">
+    <button data-act="back" title="Назад 30 с">⟲ 30</button>
+    <button data-act="toggle" class="huge">▶︎</button>
+    <button data-act="fwd" title="Вперёд 30 с">30 ⟳</button>
+  </div>
+  <div class="rctl"><button data-act="next" hidden></button><button data-act="cancel" hidden>Отмена</button></div>
+  <div class="rvol"><button data-act="mute" class="mute">🔊</button><input class="vol" type="range" min="0" max="100" step="1" value="50"></div>
+  <div id="rtracks" hidden>
+    <div class="row"><label>Звук</label><select id="raudio"></select></div>
+    <div class="row"><label>Субтитры</label><select id="rsubs"></select></div>
+  </div>
+  <div class="meta" id="rerr" style="color:var(--bad)"></div>
+  <div class="hint">Пробел — пауза · ←/→ — 10 с, с Shift — 30 с · ↑/↓ — громкость · M — звук · N — следующая серия · Esc — закрыть</div>
+</div></div>
+
+<div id="bar">
+  <input class="seek" type="range" min="0" max="0" step="1" value="0" disabled>
   <div class="inner">
-    <div class="top"><span class="now" id="now">Ничего не играет</span><span id="time">0:00 / 0:00</span></div>
-    <input id="seek" type="range" min="0" max="0" step="1" value="0" disabled>
-    <div class="ctl">
-      <button id="back" title="Назад 30 с">⟲ 30</button>
-      <button id="toggle">▶︎</button>
-      <button id="fwd" title="Вперед 30 с">30 ⟳</button>
-      <button id="stop">■ Стоп</button>
-      <button id="next" style="display:none"></button>
-      <button id="cancelnext" style="display:none">Отмена</button>
-      <span id="err"></span>
-      <span class="sp"></span>
-      <button id="mute" title="Без звука">🔊</button>
-      <input id="vol" type="range" min="0" max="100" step="1" value="50">
-    </div>
+    <img id="barpic" alt="" hidden>
+    <div id="barinfo" title="Открыть пульт"><div id="now">Ничего не играет</div><div class="m" id="bartime"></div></div>
+    <button data-act="back" class="wide" title="Назад 30 с">⟲ 30</button>
+    <button data-act="toggle">▶︎</button>
+    <button data-act="fwd" class="wide" title="Вперёд 30 с">30 ⟳</button>
+    <button data-act="next" hidden></button>
+    <button data-act="cancel" hidden>Отмена</button>
+    <span class="vol wide"><button data-act="mute" class="mute" title="Без звука">🔊</button>
+      <input class="vol" type="range" min="0" max="100" step="1" value="50"></span>
+    <button id="expand" title="Пульт">⌃</button>
   </div>
 </div>
+<div id="toasts"></div>
 
 <script>
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const api = async (path, body) => {
   const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"},
                                       body: JSON.stringify(body)} : {});
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || r.statusText);
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : r.statusText);
   return data;
 };
 const fmt = s => {
   s = Math.max(0, Math.floor(s || 0));
   const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = String(s % 60).padStart(2, "0");
-  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+  return h ? h + ":" + String(m).padStart(2, "0") + ":" + sec : m + ":" + sec;
 };
+const mins = s => { const m = Math.max(1, Math.round(s / 60)); return m >= 60 ? Math.floor(m / 60) + " ч " + (m % 60) + " мин" : m + " мин"; };
 const gb = b => b > 1e9 ? (b / 1e9).toFixed(1) + " ГБ" : Math.round(b / 1e6) + " МБ";
-const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const narrow = () => matchMedia("(max-width: 760px)").matches;
 const MODES = {direct: "напрямую", remux: "пересборка", transcode: "перекодирование"};
 
-let items = [], root = "", selected = null, st = null, dragging = false, lastSession = null;
-let followFrom = null;
-let openGroups = new Set();
-try { openGroups = new Set(JSON.parse(localStorage.getItem("tvcast.open") || "[]")); } catch {}
+function toast(msg, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  $("#toasts").append(el);
+  setTimeout(() => el.classList.add("out"), kind === "bad" ? 5000 : 2500);
+  setTimeout(() => el.remove(), kind === "bad" ? 5500 : 3000);
+}
+
+let items = [], root = "", selected = null, st = null, lastSession = null, followFrom = null;
+let loaded = false, homeScroll = 0, homeAfterPop = false;
+// Targets just sent to the TV: the status lags behind them for a few seconds (a streamed film
+// restarts ffmpeg), and quick presses must build on the target, not on the stale position.
+let seekTarget = null, seekAt = 0, volTarget = null, volAt = 0;
+let dragging = false, pendingSeek = null, seekTimer = null, lastErr = "", probeFor = null, probe = null;
+const ui = {layout: "grid", filter: "all", sort: "name", ...load("tvcast.ui", {})};
+const seasonOf = {};
 const pad = n => String(n).padStart(2, "0");
-const epCode = i => `S${pad(i.season)}E${pad(i.episode)}`;
+const epCode = i => "S" + pad(i.season) + "E" + pad(i.episode);
 const byEpisode = (a, b) => a.season - b.season || a.episode - b.episode;
 const episodesOf = series => items.filter(i => i.series === series).sort(byEpisode);
 // The first episode after this one; a second copy (720p next to 1080p) of the same one is skipped.
 const nextEpisode = i => i?.series ? episodesOf(i.series).find(e => byEpisode(e, i) > 0) || null : null;
+const started = p => p.watched || p.pos;
 // The episode to continue with: the one after the furthest started or watched, or the first.
 const continueEpisode = series => {
   const eps = episodesOf(series);
-  const last = eps.findLastIndex(e => e.progress.watched || e.progress.pos);
+  const last = eps.findLastIndex(e => started(e.progress));
   if (last >= 0 && !eps[last].progress.watched) return eps[last];
   return eps.slice(last + 1).find(e => !e.progress.watched) || null;
 };
-const poster = (i, series) => `/poster/${i.id}.jpg${series ? "?series=1" : ""}`;
-const thumb = (i, series) => `<img class="thumb" loading="lazy" alt="" src="${poster(i, series)}"
-  onerror="this.style.visibility='hidden'">`;
-const mark = p => p.watched ? `<span class="mark done">✓</span>`
-  : p.pos ? `<span class="mark">${p.duration ? Math.round(p.pos / p.duration * 100) + "%" : fmt(p.pos)}</span>` : "";
+const poster = (i, series) => "/poster/" + i.id + ".jpg" + (series ? "?series=1" : "");
+const itemTitle = i => i.series ? i.series + " · " + epCode(i) : i.title;
 const device = () => $("#device").value;
 
+function pic(src, {done = false, frac = 0, extra = ""} = {}) {
+  return '<div class="pic"><img loading="lazy" alt="" src="' + src + '" onerror="this.style.visibility=\'hidden\'">' +
+    (done ? '<span class="done">✓</span>' : "") +
+    (frac > 0 ? '<div class="prog"><i style="width:' + Math.min(100, frac * 100).toFixed(1) + '%"></i></div>' : "") +
+    extra + "</div>";
+}
+const frac = p => !p.watched && p.pos && p.duration ? p.pos / p.duration : 0;
+const leftText = p => p.duration ? "осталось " + mins(p.duration - p.pos) : "с " + fmt(p.pos);
+
+// --- navigation: history entries, so the phone's back gesture closes sheets and pages
+let route = {series: null, item: null, remote: false};
+function go(patch, replace = false) {
+  const depth = (history.state?.depth || 0) + (replace ? 0 : 1);
+  route = {...route, ...patch};
+  history[replace ? "replaceState" : "pushState"]({route, depth}, "");
+  applyRoute();
+}
+function back() {
+  if ((history.state?.depth || 0) > 0) history.back();
+  else go({series: route.item || route.remote ? route.series : null, item: null, remote: false}, true);
+}
+const HOME = {series: null, item: null, remote: false};
+onpopstate = e => {
+  route = e.state?.route || HOME;
+  if (homeAfterPop) {
+    homeAfterPop = false;
+    if (route.series || route.item || route.remote) return go(HOME, true);
+  }
+  applyRoute();
+};
+function goHome() {
+  const depth = history.state?.depth || 0;
+  if (!depth) return go(HOME, true);
+  // Unwinding keeps the back gesture leaving the app instead of reopening old pages.
+  homeAfterPop = true;
+  history.go(-depth);
+}
+let shownSeries = null, detailId = null;
+function applyRoute() {
+  $("#home").hidden = !!route.series;
+  $("#series").hidden = !route.series;
+  const moved = route.series !== shownSeries;
+  if (moved && shownSeries === null) homeScroll = scrollY;
+  shownSeries = route.series;
+  renderPage();
+  if (moved) scrollTo(0, route.series ? 0 : homeScroll);
+  $("#sheet").hidden = !route.item;
+  if (!route.item) { detailId = null; selected = null; }
+  else if (detailId !== route.item) openItem(route.item);
+  $("#remote").hidden = !route.remote;
+  document.body.classList.toggle("locked", !!(route.item || route.remote));
+}
+const renderPage = () => route.series ? renderSeries(route.series) : renderHome();
+
+// --- devices
 async function loadDevices() {
-  const list = await api("/api/devices");
+  const list = await api("/api/devices").catch(() => []);
   const cur = device() || localStorage.getItem("tvcast.device");
   $("#device").innerHTML = list.length
-    ? list.map(d => `<option value="${d.id}">${esc(d.name)} · ${esc(d.model)}</option>`).join("")
-    : `<option value="">ищу телевизоры…</option>`;
+    ? list.map(d => '<option value="' + esc(d.id) + '">' + esc(d.name) + " · " + esc(d.model) + "</option>").join("")
+    : '<option value="">ищу телевизоры…</option>';
   if (list.some(d => d.id === cur)) $("#device").value = cur;
   if (!list.length) setTimeout(loadDevices, 2000);
 }
 $("#device").onchange = () => { try { localStorage.setItem("tvcast.device", device()); } catch {} };
+function setConn(kind, text) { $("#conn").className = "dot " + kind; $("#conn").title = text; }
 
+// --- library
 async function loadLibrary() {
   const data = await api("/api/library");
   items = data.items;
   root = data.root;
-  renderList();
+  loaded = true;
+  renderPage();
 }
 // Positions used to live in each browser; hand them to the server once so they aren't lost.
 async function migrateLocalPositions() {
@@ -178,190 +372,379 @@ async function migrateLocalPositions() {
     } catch {}
   }
 }
-function itemRow(i) {
-  // The file name is already in the second line, and for episodes it is often just "S01E04".
-  const title = i.series ? epCode(i) : esc(i.title);
-  return `<li data-id="${i.id}" class="${i.series ? "ep " : ""}${selected?.id === i.id ? "sel" : ""}">
-      ${thumb(i)}<div class="info">
-        <div class="t">${mark(i.progress)}${title}</div><div class="m">${esc(i.rel)} · ${gb(i.size)}</div>
-      </div>
-    </li>`;
-}
-function groupRows(series, eps, expanded) {
-  const all = episodesOf(series);
-  const watched = all.filter(e => e.progress.watched).length;
-  const seasons = new Set(all.map(e => e.season)).size;
-  const cont = continueEpisode(series);
-  const head = `<li class="group" data-series="${esc(series)}">${thumb(all[0], true)}<div class="info">
-      <div class="t">${expanded ? "▾" : "▸"} ${esc(series)}</div>
-      <div class="m">${seasons > 1 ? seasons + " сез. · " : ""}${all.length} сер. · просмотрено ${watched}/${all.length}${cont ? " · дальше " + epCode(cont) : ""}</div>
-    </div></li>`;
-  return head + (expanded ? eps.map(itemRow).join("") : "");
-}
-function renderList() {
-  const q = $("#q").value.trim().toLowerCase();
-  const shown = items.filter(i => i.rel.toLowerCase().includes(q) || i.series.toLowerCase().includes(q));
-  if (!shown.length) {
-    $("#list").innerHTML = `<li class="empty">${items.length ? "Ничего не найдено." :
-       `Пока пусто. Положите фильмы в <code>${esc(root)}</code> и обновите страницу.`}</li>`;
-    return;
-  }
-  const groups = new Map(), rows = [];
-  for (const i of shown) {
-    if (!i.series) { rows.push([i.title, itemRow(i)]); continue; }
-    if (!groups.has(i.series)) groups.set(i.series, []);
-    groups.get(i.series).push(i);
-  }
-  for (const [series, eps] of groups) {
-    eps.sort(byEpisode);
-    const expanded = !!q || openGroups.has(series) || eps.some(e => e.id === selected?.id);
-    rows.push([series, groupRows(series, eps, expanded)]);
-  }
-  rows.sort((a, b) => a[0].localeCompare(b[0], "ru"));
-  $("#list").innerHTML = rows.map(r => r[1]).join("");
-}
-$("#q").oninput = () => renderList();
-$("#list").onclick = e => {
-  const li = e.target.closest("li[data-id], li[data-series]");
-  if (!li) return;
-  if (li.dataset.id) return openItem(li.dataset.id);
-  if ($("#q").value.trim()) return;  // while searching every matching group is shown open
-  const s = li.dataset.series;
-  openGroups.has(s) ? openGroups.delete(s) : openGroups.add(s);
-  try { localStorage.setItem("tvcast.open", JSON.stringify([...openGroups])); } catch {}
-  renderList();
-};
 
-async function openItem(id, opts = {}) {
+function entries() {
+  const groups = new Map(), out = [];
+  for (const i of items) {
+    if (!i.series) { out.push({kind: "movie", title: i.title, item: i, mtime: i.mtime}); continue; }
+    let g = groups.get(i.series);
+    if (!g) { g = {kind: "series", title: i.series, eps: [], mtime: 0}; groups.set(i.series, g); out.push(g); }
+    g.eps.push(i);
+    g.mtime = Math.max(g.mtime, i.mtime);
+  }
+  for (const g of groups.values()) g.eps.sort(byEpisode);
+  return out;
+}
+const matches = (e, q) => !q || (e.kind === "movie" ? e.item.rel.toLowerCase().includes(q)
+  : e.title.toLowerCase().includes(q) || e.eps.some(i => i.rel.toLowerCase().includes(q)));
+function passes(e) {
+  if (ui.filter === "all") return true;
+  const ps = e.kind === "movie" ? [e.item.progress] : e.eps.map(i => i.progress);
+  const unwatched = ps.some(p => !p.watched);
+  return ui.filter === "new" ? unwatched : unwatched && ps.some(started);
+}
+// Started films and, for each started series, the episode to go on with; the latest first.
+function continueList() {
+  const out = [];
+  for (const e of entries()) {
+    if (e.kind === "movie") {
+      const p = e.item.progress;
+      if (p.pos && !p.watched) out.push({item: e.item, at: p.at || 0});
+    } else if (e.eps.some(i => started(i.progress))) {
+      const c = continueEpisode(e.title);
+      if (c) out.push({item: c, at: Math.max(...e.eps.map(i => i.progress.at || 0))});
+    }
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, 12);
+}
+
+function shelfCard({item: i}) {
+  const p = i.progress;
+  const sub = p.pos ? leftText(p) : "следующая серия";
+  return '<div class="card" data-play="' + i.id + '" title="Показать на ТВ">' +
+    pic(poster(i), {frac: frac(p), extra: '<span class="play">▶︎</span><button class="info-btn" data-info="' + i.id + '" title="Подробнее">i</button>'}) +
+    '<div class="t">' + esc(itemTitle(i)) + '</div><div class="m">' + sub + "</div></div>";
+}
+function libCard(e) {
+  if (e.kind === "movie") {
+    const i = e.item, p = i.progress;
+    const sub = p.watched ? "просмотрено" : p.pos ? leftText(p) : p.duration ? fmt(p.duration) : gb(i.size);
+    return '<div class="card' + (selected?.id === i.id ? " sel" : "") + '" data-item="' + i.id + '">' +
+      pic(poster(i), {done: p.watched, frac: frac(p)}) +
+      '<div><div class="t">' + esc(i.title) + '</div><div class="m">' + sub + "</div></div></div>";
+  }
+  const watched = e.eps.filter(i => i.progress.watched).length;
+  const seasons = new Set(e.eps.map(i => i.season)).size;
+  const sub = (seasons > 1 ? seasons + " сез. · " : "") + e.eps.length + " сер." +
+    (watched ? " · просмотрено " + watched + "/" + e.eps.length : "");
+  return '<div class="card" data-series="' + esc(e.title) + '">' +
+    pic(poster(e.eps[0], true), {done: watched === e.eps.length, frac: watched < e.eps.length ? watched / e.eps.length : 0}) +
+    '<div><div class="t">' + esc(e.title) + '</div><div class="m">' + sub + "</div></div></div>";
+}
+function renderHome() {
+  const q = $("#q").value.trim().toLowerCase();
+  $$("#filters button").forEach(b => b.classList.toggle("on", b.dataset.filter === ui.filter));
+  $("#sort").value = ui.sort;
+  $("#layout").textContent = ui.layout === "grid" ? "☰ Список" : "▦ Сетка";
+  $("#lib").className = ui.layout;
+  const cont = !q && ui.filter === "all" ? continueList() : [];
+  $("#shelfwrap").hidden = !cont.length;
+  $("#shelf").innerHTML = cont.map(shelfCard).join("");
+  const shown = entries().filter(e => matches(e, q) && passes(e));
+  shown.sort(ui.sort === "added" ? (a, b) => b.mtime - a.mtime : (a, b) => a.title.localeCompare(b.title, "ru"));
+  $("#libtitle").textContent = q || ui.filter !== "all" ? "Найдено: " + shown.length : "Библиотека";
+  $("#lib").innerHTML = shown.length ? shown.map(libCard).join("") : '<div class="empty">' + (!loaded ? "Загружаю библиотеку…" : items.length
+    ? "Ничего не найдено." : "Пока пусто. Положите фильмы в <code>" + esc(root) + "</code> и обновите страницу.") + "</div>";
+}
+$("#q").oninput = () => renderHome();
+$("#sort").onchange = e => { ui.sort = e.target.value; store("tvcast.ui", ui); renderHome(); };
+$("#layout").onclick = () => { ui.layout = ui.layout === "grid" ? "list" : "grid"; store("tvcast.ui", ui); renderHome(); };
+
+function renderSeries(name) {
+  const eps = episodesOf(name);
+  const head = '<button class="back" data-close>← Библиотека</button>';
+  if (!eps.length) { $("#series").innerHTML = head + '<div class="empty">Сериал не найден.</div>'; return; }
+  const seasons = [...new Set(eps.map(e => e.season))];
+  const cont = continueEpisode(name);
+  if (!seasons.includes(seasonOf[name])) seasonOf[name] = cont?.season ?? seasons[0];
+  const watched = eps.filter(e => e.progress.watched).length;
+  const any = eps.some(e => started(e.progress));
+  const action = cont
+    ? '<button class="primary" data-play="' + cont.id + '">▶︎ ' + (any ? "Продолжить " : "Смотреть ") + epCode(cont) +
+      (cont.progress.pos ? " с " + fmt(cont.progress.pos) : "") + "</button>" +
+      '<button data-info="' + cont.id + '">Звук и субтитры</button>'
+    : '<span class="meta">Все серии просмотрены</span>';
+  const tabs = seasons.length > 1 ? '<div class="tabs">' + seasons.map(s =>
+    '<button data-season="' + s + '" class="' + (s === seasonOf[name] ? "on" : "") + '">Сезон ' + s + "</button>").join("") + "</div>" : "";
+  const rows = eps.filter(e => e.season === seasonOf[name]).map(e => {
+    const p = e.progress;
+    const sub = p.watched ? "просмотрено" : p.pos ? leftText(p) : p.duration ? fmt(p.duration) : gb(e.size);
+    return '<li data-item="' + e.id + '">' + pic(poster(e), {done: p.watched, frac: frac(p)}) +
+      '<div class="info"><div class="t">' + epCode(e) + (cont?.id === e.id ? ' <span class="badge b-direct">дальше</span>' : "") +
+      '</div><div class="m">' + esc(e.rel.split("/").pop()) + '</div><div class="m">' + sub + "</div></div></li>";
+  }).join("");
+  $("#series").innerHTML = head + '<div class="shead">' + pic(poster(eps[0], true)) +
+    "<div><h2>" + esc(name) + '</h2><div class="meta">' + (seasons.length > 1 ? seasons.length + " сез. · " : "") +
+    eps.length + " сер. · просмотрено " + watched + "/" + eps.length + '</div><div class="actions">' + action + "</div></div></div>" +
+    tabs + '<ul class="eps">' + rows + "</ul>";
+}
+
+// --- details sheet
+const savedTracks = id => load("tvcast.tracks." + id, null);
+async function openItem(id, opts) {
+  detailId = id;
+  opts ??= savedTracks(id) || {};
   const q = new URLSearchParams();
   if (opts.audio != null) q.set("audio", opts.audio);
   if (opts.transcode) q.set("transcode", "true");
-  $("#detail").innerHTML = `<div class="empty">Читаю файл…</div>`;
-  try { selected = await api(`/api/item/${id}?${q}`); }
-  catch (e) { $("#detail").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  renderList();
-  const p = selected.probe;
-  const audio = p.audio.map(a => `<option value="${a.index}" ${opts.audio == a.index || (opts.audio == null && a.default) ? "selected" : ""}>
-      ${esc([a.lang, a.title, a.codec, a.channels ? a.channels + "ch" : ""].filter(Boolean).join(" · "))}</option>`).join("");
-  const subs = `<option value="">без субтитров</option>` + p.subtitles.map(s =>
-      `<option value="${s.key}" ${s.supported ? "" : "disabled"} ${opts.sub === s.key ? "selected" : ""}>${esc(s.label)}${s.supported ? "" : " (картинкой — не поддерживается)"}</option>`).join("");
-  $("#detail").innerHTML = `
-    <img class="hero" alt="" src="${poster(selected)}" onerror="this.remove()">
-    <h2>${esc(selected.series ? `${selected.series} · ${epCode(selected)}` : selected.title)}</h2>
-    <div class="meta">${p.width}×${p.height} · ${esc(p.video_codec)} ${esc(p.video_profile)} · ${fmt(p.duration)}</div>
-    <div><span class="badge b-${selected.mode}">${MODES[selected.mode]}</span>
-         <span class="meta"> ${esc(selected.reason)}</span></div>
-    <div class="row"><label>Звук</label><select id="audio">${audio || "<option>нет</option>"}</select></div>
-    <div class="row"><label>Субтитры</label><select id="sub">${subs}</select></div>
-    <div class="row"><label>Качество</label>
-      <label style="color:var(--text)"><input type="checkbox" id="tc" ${opts.transcode ? "checked" : ""}>
-        перекодировать (если на ТВ нет картинки)</label></div>
-    <div class="actions">
-      <button class="primary" id="play">▶︎ Показать на ТВ</button>
-      <button id="resume" style="display:none"></button>
-      <button id="watched"></button>
-      <button id="nextep" style="display:none"></button>
-      <span id="perr" style="color:var(--bad)"></span>
-    </div>`;
-  const reopen = () => openItem(id, {audio: $("#audio").value === "" ? null : +$("#audio").value,
-                                     sub: $("#sub").value, transcode: $("#tc").checked});
-  $("#audio").onchange = reopen; $("#tc").onchange = reopen;
-  $("#play").onclick = () => play(0);
+  $("#detail").innerHTML = '<div class="empty">Читаю файл…</div>';
+  let data;
+  try { data = await api("/api/item/" + id + "?" + q); }
+  catch (e) { if (route.item === id) $("#detail").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+  if (route.item !== id) return;
+  selected = data;
+  const p = data.probe;
+  const audio = p.audio.map(a => '<option value="' + a.index + '" ' + (opts.audio == a.index || (opts.audio == null && a.default) ? "selected" : "") + ">" +
+      esc([a.lang, a.title, a.codec, a.channels ? a.channels + "ch" : ""].filter(Boolean).join(" · ")) + "</option>").join("");
+  const subs = '<option value="">без субтитров</option>' + p.subtitles.map(s =>
+      '<option value="' + esc(s.key) + '" ' + (s.supported ? "" : "disabled") + " " + (opts.sub === s.key ? "selected" : "") + ">" +
+      esc(s.label) + (s.supported ? "" : " (картинкой — не поддерживается)") + "</option>").join("");
+  $("#detail").innerHTML =
+    '<img class="hero" alt="" src="' + poster(data) + '" onerror="this.remove()">' +
+    "<h2>" + esc(itemTitle(data)) + "</h2>" +
+    '<div class="meta">' + p.width + "×" + p.height + " · " + esc(p.video_codec) + " " + esc(p.video_profile) + " · " + fmt(p.duration) + "</div>" +
+    '<div style="margin-top:8px"><span class="badge b-' + data.mode + '">' + MODES[data.mode] + '</span> <span class="meta">' + esc(data.reason) + "</span></div>" +
+    '<div class="row"><label>Звук</label><select id="audio">' + (audio || "<option>нет</option>") + "</select></div>" +
+    '<div class="row"><label>Субтитры</label><select id="sub">' + subs + "</select></div>" +
+    '<div class="row"><label>Качество</label><label><input type="checkbox" id="tc" ' + (opts.transcode ? "checked" : "") + "> перекодировать (если на ТВ нет картинки)</label></div>" +
+    '<div class="actions"><button class="primary" id="play">▶︎ Показать на ТВ</button><button id="resume" hidden></button>' +
+    '<button id="watched"></button><button id="nextep" hidden></button></div>';
+  const reopen = () => openItem(id, chosenTracks());
+  $("#audio").onchange = reopen;
+  $("#tc").onchange = reopen;
+  $("#play").onclick = () => playSelected(0);
   renderProgress();
   const next = nextEpisode(items.find(i => i.id === id));
   if (next) {
-    $("#nextep").style.display = "";
-    $("#nextep").textContent = `Следующая: ${epCode(next)}`;
-    $("#nextep").onclick = () => openItem(next.id);
+    $("#nextep").hidden = false;
+    $("#nextep").textContent = "Следующая: " + epCode(next);
+    $("#nextep").onclick = () => go({item: next.id}, true);
   }
 }
-
+const chosenTracks = () => ({audio: $("#audio").value === "" || isNaN(+$("#audio").value) ? null : +$("#audio").value,
+                             sub: $("#sub").value || null, transcode: $("#tc").checked});
 function renderProgress() {
   if (!selected || !$("#watched")) return;
   const id = selected.id, saved = selected.progress.pos || 0;
-  $("#resume").style.display = saved > 60 ? "" : "none";
-  $("#resume").textContent = `Продолжить с ${fmt(saved)}`;
-  $("#resume").onclick = () => play(saved);
+  $("#resume").hidden = saved <= 60;
+  $("#resume").textContent = "Продолжить с " + fmt(saved);
+  $("#resume").onclick = () => playSelected(saved);
   $("#watched").textContent = selected.progress.watched ? "Снять отметку" : "✓ Просмотрено";
   $("#watched").onclick = async () => {
     try {
       selected.progress = await api("/api/progress", {item: id, watched: !selected.progress.watched});
       renderProgress();
       await loadLibrary();
-    } catch (e) { $("#perr").textContent = e.message; }
+    } catch (e) { toast(e.message, "bad"); }
   };
 }
 
-async function play(start) {
-  if (!device()) { $("#perr").textContent = "Телевизор не найден"; return; }
-  $("#perr").textContent = "Запускаю…";
+// --- playback
+async function startPlay(id, start, tracks = {}) {
+  if (!device()) { toast("Телевизор не найден", "bad"); return false; }
+  toast("Запускаю на ТВ…");
   try {
-    await api("/api/play", {device: device(), item: selected.id, start,
-      audio: $("#audio").value === "" || isNaN(+$("#audio").value) ? null : +$("#audio").value,
-      sub: $("#sub").value || null, transcode: $("#tc").checked});
-    $("#perr").textContent = "";
-  } catch (e) { $("#perr").textContent = e.message; }
+    await api("/api/play", {device: device(), item: id, start, audio: tracks.audio ?? null,
+                            sub: tracks.sub ?? null, transcode: !!tracks.transcode, like: tracks.like ?? null});
+    // Carried-over tracks are only known to the server; this episode keeps no choice of its own.
+    if (!tracks.like) store("tvcast.tracks." + id, tracks);
+    return true;
+  } catch (e) { toast(e.message, "bad"); return false; }
+}
+// On a phone the remote is what one wants next; on a computer the bar at the bottom is enough.
+const afterPlay = () => narrow() ? go({item: null, remote: true}, !!route.item) : route.item && back();
+async function playSelected(start) { if (await startPlay(selected.id, start, chosenTracks())) afterPlay(); }
+// A new episode goes on with the dub and subtitles of the latest earlier one played from here.
+function inheritedTracks(i) {
+  if (!i.series) return {};
+  const before = episodesOf(i.series).filter(e => byEpisode(e, i) < 0).reverse();
+  for (const e of before) { const t = savedTracks(e.id); if (t) return {...t, like: e.id}; }
+  return {};
+}
+async function quickPlay(id) {
+  const i = items.find(x => x.id === id);
+  if (i && await startPlay(id, i.progress.pos || 0, savedTracks(id) || inheritedTracks(i))) afterPlay();
 }
 
 const ctl = (action, value) => device() && api("/api/control", {device: device(), action, value})
-  .catch(e => $("#err").textContent = e.message);
-$("#toggle").onclick = () => ctl(st?.state === "PLAYING" ? "pause" : "play");
-$("#stop").onclick = () => ctl("stop");
-$("#back").onclick = () => st && ctl("seek", st.position - 30);
-$("#fwd").onclick = () => st && ctl("seek", st.position + 30);
-$("#mute").onclick = () => ctl("mute");
-// The server picks the next episode and carries the audio and subtitle choice over to it.
-$("#next").onclick = () => ctl("next");
-$("#cancelnext").onclick = () => ctl("cancel_next");
-$("#vol").onchange = e => ctl("volume", e.target.value / 100);
-$("#seek").oninput = e => { dragging = true; $("#time").textContent = `${fmt(e.target.value)} / ${fmt(st?.duration)}`; };
-$("#seek").onchange = e => { dragging = false; ctl("seek", +e.target.value); };
+  .catch(e => toast(e.message, "bad"));
+// Streamed films restart ffmpeg on every seek, so a burst of key presses becomes one jump.
+const curPos = () => pendingSeek ?? (seekTarget != null && Date.now() - seekAt < 8000 ? seekTarget : st?.position || 0);
+function sendSeek(target) {
+  seekTarget = target; seekAt = Date.now();
+  ctl("seek", target);
+}
+function seekBy(delta) {
+  if (!st?.state || st.state === "UNKNOWN") return;
+  pendingSeek = Math.max(0, Math.min((st.duration || Infinity) - 5, curPos() + delta));
+  showTime(pendingSeek);
+  clearTimeout(seekTimer);
+  seekTimer = setTimeout(() => { sendSeek(pendingSeek); pendingSeek = null; }, 600);
+}
+const curVol = () => volTarget != null && Date.now() - volAt < 3000 ? volTarget : st?.volume;
+function setVol(v) {
+  volTarget = Math.max(0, Math.min(1, Math.round(v * 100) / 100)); volAt = Date.now();
+  $$(".vol").forEach(el => el.value = Math.round(volTarget * 100));
+  ctl("volume", volTarget);
+}
+const actions = {
+  toggle: () => ctl(st?.state === "PLAYING" ? "pause" : "play"),
+  stop: () => ctl("stop"),
+  back: () => seekBy(-30),
+  fwd: () => seekBy(30),
+  mute: () => ctl("mute"),
+  // The server picks the next episode and carries the audio and subtitle choice over to it.
+  next: () => ctl("next"),
+  cancel: () => ctl("cancel_next"),
+};
+$$(".seek").forEach(el => {
+  el.oninput = () => { dragging = true; showTime(+el.value); };
+  el.onchange = () => { dragging = false; sendSeek(+el.value); el.blur(); };
+});
+$$(".vol").forEach(el => { el.onchange = () => { setVol(el.value / 100); el.blur(); }; });
+$("#barinfo").onclick = $("#expand").onclick = () => route.remote ? back() : go({remote: true, item: null}, !!route.item);
+
+async function switchTracks() {
+  const s = st?.session;
+  if (!s) return;
+  const tracks = {audio: $("#raudio").value === "" ? null : +$("#raudio").value, sub: $("#rsubs").value || null,
+                  transcode: !!s.transcode};
+  toast("Переключаю дорожки…");
+  try {
+    await api("/api/play", {device: device(), item: s.item_id, start: curPos(), ...tracks});
+    store("tvcast.tracks." + s.item_id, tracks);
+  } catch (e) { toast(e.message, "bad"); }
+  $("#raudio").blur(); $("#rsubs").blur();
+}
+$("#raudio").onchange = $("#rsubs").onchange = switchTracks;
+async function loadProbe(id) {
+  probeFor = id; probe = null;
+  $("#rtracks").hidden = true;
+  if (!id) return;
+  try { const d = await api("/api/item/" + id); if (probeFor === id) probe = d.probe; } catch {}
+}
+function renderTracks(s) {
+  if (!probe || !s || document.activeElement?.closest("#rtracks")) { $("#rtracks").hidden = !probe || !s; return; }
+  $("#rtracks").hidden = false;
+  const a = s.audio_index ?? probe.audio.find(x => x.default)?.index;
+  $("#raudio").innerHTML = probe.audio.map(x => '<option value="' + x.index + '" ' + (x.index === a ? "selected" : "") + ">" +
+    esc([x.lang, x.title, x.codec, x.channels ? x.channels + "ch" : ""].filter(Boolean).join(" · ")) + "</option>").join("");
+  $("#rsubs").innerHTML = '<option value="">без субтитров</option>' + probe.subtitles.filter(x => x.supported).map(x =>
+    '<option value="' + esc(x.key) + '" ' + (x.key === s.sub_key ? "selected" : "") + ">" + esc(x.label) + "</option>").join("");
+}
+
+function showTime(pos) {
+  const dur = st?.duration || 0;
+  $$(".pos").forEach(el => el.textContent = fmt(pos));
+  $$(".dur").forEach(el => el.textContent = dur ? "−" + fmt(dur - pos) : "0:00");
+  $("#bartime").textContent = st?.session || st?.next_up ? fmt(pos) + " / " + fmt(dur) + (st.session ? " · " + MODES[st.session.mode] : "") : "";
+}
+function renderPlayer() {
+  const s = st?.session, up = st?.next_up, active = !!(s && st.state && st.state !== "UNKNOWN");
+  let title = s ? s.title : st?.app ? "На ТВ: " + st.app : "Ничего не играет";
+  if (up) title = up.in < 1 ? "Запускаю " + up.series + " · " + epCode(up) + "…"
+    : "Далее: " + up.series + " · " + epCode(up) + " через " + Math.ceil(up.in) + " с";
+  $("#now").textContent = title;
+  $("#rtitle").textContent = title;
+  $("#rmode").textContent = s ? MODES[s.mode] + " · " + s.reason : "";
+  $$("[data-act=toggle]").forEach(b => b.textContent = st?.state === "PLAYING" ? "❚❚" : "▶︎");
+  if (seekTarget != null && Math.abs((st?.position || 0) - seekTarget) < 5) seekTarget = null;
+  if (volTarget != null && Math.abs((st?.volume ?? -1) - volTarget) < .01) volTarget = null;
+  const pos = curPos();
+  $$(".seek").forEach(el => {
+    el.disabled = !active;
+    el.max = Math.floor(st?.duration || 0);
+    if (!dragging) el.value = Math.floor(pos);
+  });
+  if (!dragging) showTime(pos);
+  const left = (st?.duration || 0) - pos;
+  $$(".ends").forEach(el => el.textContent = active && st.duration && left > 0
+    ? "закончится в " + new Date(Date.now() + left * 1000).toLocaleTimeString("ru", {hour: "2-digit", minute: "2-digit"}) : "");
+  if (curVol() != null) $$(".vol").forEach(el => { if (document.activeElement !== el) el.value = Math.round(curVol() * 100); });
+  $$(".mute").forEach(b => b.textContent = st?.muted ? "🔇" : "🔊");
+  // After an episode ends (autoplay off, or still preparing) "after" names it.
+  const cur = s?.item_id || st?.after;
+  const next = up || (cur && nextEpisode(items.find(i => i.id === cur)));
+  $$("[data-act=next]").forEach(b => { b.hidden = !next; if (next) b.textContent = up ? "▶ Сейчас" : "Следующая: " + epCode(next) + " ⏭"; });
+  $$("[data-act=cancel]").forEach(b => b.hidden = !up);
+  const picId = s?.item_id || up?.item_id;
+  const picSrc = picId ? poster({id: picId}) : "";
+  $("#barpic").hidden = !picId;
+  if (picId && $("#barpic").getAttribute("src") !== picSrc) { $("#barpic").src = picSrc; $("#rpic").src = picSrc; }
+  $("#rpic").hidden = !picId;
+  const err = s?.error || st?.error || "";
+  if (err && err !== lastErr) toast(err, "bad");
+  lastErr = err;
+  $("#rerr").textContent = err;
+  if ((s?.item_id || null) !== probeFor) loadProbe(s?.item_id || null);
+  renderTracks(s);
+}
 
 async function poll() {
   if (device()) {
     try {
-      st = await api(`/api/status/${device()}`);
-      const s = st.session, active = s && st.state && st.state !== "UNKNOWN";
-      $("#now").textContent = s ? `${s.title} · ${MODES[s.mode]}` : (st.app ? `На ТВ: ${st.app}` : "Ничего не играет");
-      $("#toggle").textContent = st.state === "PLAYING" ? "❚❚" : "▶︎";
-      $("#seek").disabled = !active;
-      $("#seek").max = Math.floor(st.duration || 0);
-      if (!dragging) {
-        $("#seek").value = Math.floor(st.position || 0);
-        $("#time").textContent = `${fmt(st.position)} / ${fmt(st.duration)}`;
-      }
-      if (st.volume != null && document.activeElement !== $("#vol")) $("#vol").value = Math.round(st.volume * 100);
-      $("#mute").textContent = st.muted ? "🔇" : "🔊";
-      $("#err").textContent = s?.error || st.error || "";
-      const up = st.next_up;
-      if (up) $("#now").textContent = up.in < 1 ? `Запускаю ${up.series} · ${epCode(up)}…`
-        : `Далее: ${up.series} · ${epCode(up)} через ${Math.ceil(up.in)} с`;
-      // After an episode ends (autoplay off, or still preparing) "after" names it.
-      const cur = s?.item_id || st.after;
-      const next = up || (cur && nextEpisode(items.find(i => i.id === cur)));
-      $("#next").style.display = next ? "" : "none";
-      if (next) $("#next").textContent = up ? "▶ Сейчас" : `Следующая: ${epCode(next)} ⏭`;
-      $("#cancelnext").style.display = up ? "" : "none";
+      st = await api("/api/status/" + device());
+      setConn("ok", "Телевизор на связи");
+      renderPlayer();
       // The server saves positions every 10 s; refresh the marks when a film starts or ends.
-      const sid = s?.item_id || null;
+      const sid = st.session?.item_id || null;
       if (sid !== lastSession) {
-        // Follow autoplay: the details pane showing the episode that ended moves to the new one.
+        // Follow autoplay: the details sheet showing the episode that ended moves to the new one.
         // Between the two there is no session for the whole countdown, so remember the old one.
         const from = lastSession || followFrom;
-        if (sid && from && selected?.id === from) openItem(sid);
-        followFrom = !sid && lastSession && up ? lastSession : sid ? null : followFrom;
+        if (sid && from && route.item === from) go({item: sid}, true);
+        followFrom = !sid && lastSession && st.next_up ? lastSession : sid ? null : followFrom;
         lastSession = sid;
         loadLibrary().then(() => {
           const fresh = selected && items.find(i => i.id === selected.id);
           if (fresh) { selected.progress = fresh.progress; renderProgress(); }
         }).catch(() => {});
       }
-    } catch (e) { $("#err").textContent = e.message; }
-  }
+    } catch (e) { setConn("bad", e.message); }
+  } else setConn("warn", "Телевизор не выбран");
   setTimeout(poll, 1000);
 }
 
-loadDevices(); migrateLocalPositions().finally(loadLibrary); poll();
+// --- clicks and keys
+document.addEventListener("click", e => {
+  const t = e.target;
+  if (t.classList.contains("overlay")) return back();
+  const el = t.closest("[data-play], [data-info], [data-item], [data-series], [data-close], [data-act], [data-season], [data-filter], [data-home]");
+  if (!el) return;
+  const d = el.dataset;
+  if (d.play) quickPlay(d.play);
+  else if (d.info || d.item) go({item: d.info || d.item});
+  else if (d.series) go({series: d.series, item: null});
+  else if ("close" in d) back();
+  else if (d.act) { actions[d.act](); el.blur(); }
+  else if (d.season) { seasonOf[route.series] = +d.season; renderSeries(route.series); }
+  else if (d.filter) { ui.filter = d.filter; store("tvcast.ui", ui); renderHome(); }
+  else if ("home" in d) { if (route.series || route.item || route.remote) goHome(); }
+});
+document.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "Escape") { if (route.item || route.remote || route.series) { e.preventDefault(); back(); } return; }
+  const t = e.target;
+  if (t.matches("input[type=search], input[type=text], select, textarea") ||
+      (t.matches("input[type=range]") && e.key.startsWith("Arrow")) ||
+      (e.code === "Space" && t.matches("button, input[type=checkbox]"))) return;
+  const vol = d => curVol() != null && setVol(curVol() + d);
+  const keys = {
+    Space: actions.toggle, ArrowLeft: () => seekBy(e.shiftKey ? -30 : -10), ArrowRight: () => seekBy(e.shiftKey ? 30 : 10),
+    ArrowUp: () => vol(.05), ArrowDown: () => vol(-.05), KeyM: actions.mute,
+    KeyN: () => st?.next_up || $("[data-act=next]:not([hidden])") ? actions.next() : null,
+    Slash: () => { if (!route.series && !route.item && !route.remote) $("#q").focus(); },
+  };
+  if (!keys[e.code]) return;
+  e.preventDefault();
+  keys[e.code]();
+});
+
+// A reload keeps the page it was on, and the depth the entries behind it rely on.
+if (history.state?.route) route = history.state.route;
+else history.replaceState({route, depth: 0}, "");
+applyRoute();
+loadDevices(); migrateLocalPositions().finally(() => loadLibrary().catch(e => toast(e.message, "bad"))); poll();
 </script>
 </body>
 </html>

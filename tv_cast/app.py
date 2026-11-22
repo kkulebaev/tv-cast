@@ -123,14 +123,28 @@ class PlayRequest(BaseModel):
     sub: str | None = None
     start: float = 0.0
     transcode: bool = False
+    # The item audio and sub were picked in, when it is not the one being played: stream
+    # indexes differ between episodes, so the choice is matched by language and title.
+    like: str | None = None
+
+
+def _carry_tracks(like: media.Item, audio: int | None, sub: str | None, item: media.Item):
+    try:
+        prev, cur = media.probe(like), media.probe(item)
+    except Exception:
+        return None, None
+    return media.match_audio(prev, audio, cur), media.match_sub(prev, sub, cur)
 
 
 @app.post("/api/play")
 async def play(req: PlayRequest):
     item = _item(req.item)
+    audio, sub = req.audio, req.sub
+    if req.like and req.like != req.item and (like := media.get(req.like)):
+        audio, sub = await run_in_threadpool(_carry_tracks, like, audio, sub, item)
     try:
         s = await run_in_threadpool(
-            manager.play, req.device, item, req.audio, req.sub, req.start, req.transcode
+            manager.play, req.device, item, audio, sub, req.start, req.transcode
         )
     except KeyError as e:
         raise HTTPException(404, "телевизор не найден") from e
