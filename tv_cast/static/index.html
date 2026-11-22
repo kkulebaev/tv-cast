@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TV Cast</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262a33; --text: #e7e9ee; --muted: #8b91a0;
+    --accent: #5b9dff; --ok: #3ecf8e; --warn: #f5b74f; --bad: #ff6b6b; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 14px 20px;
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .sp { flex: 1; }
+  select, input[type=search], button {
+    font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  main { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.2fr);
+         gap: 16px; padding: 16px 20px 140px; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 12px 16px 170px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  #lib { padding: 10px; }
+  #lib input { width: 100%; margin-bottom: 8px; }
+  #list { list-style: none; margin: 0; padding: 0; max-height: 65vh; overflow: auto; }
+  #list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+  #list li:hover { background: #1f232c; }
+  #list li.sel { background: #22304a; }
+  #list .t { font-weight: 500; }
+  #list .m { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); padding: 18px 10px; }
+  .empty code { color: var(--text); }
+  #detail { padding: 18px; }
+  #detail h2 { margin: 0 0 6px; font-size: 19px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .b-direct { background: #173a2c; color: var(--ok); }
+  .b-remux { background: #3a3117; color: var(--warn); }
+  .b-transcode { background: #3a1d1d; color: var(--bad); }
+  .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; margin: 10px 0; }
+  .row label { color: var(--muted); }
+  .row select { width: 100%; }
+  .actions { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  #player { position: fixed; left: 0; right: 0; bottom: 0; background: #12151b; border-top: 1px solid var(--line);
+            padding: 10px 20px 14px; }
+  #player .inner { max-width: 1200px; margin: 0 auto; }
+  #player .top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted); }
+  #player .now { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #seek { width: 100%; margin: 8px 0; accent-color: var(--accent); }
+  .ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ctl .sp { flex: 1; }
+  #vol { width: 120px; accent-color: var(--accent); }
+  #err { color: var(--bad); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📺 TV Cast</h1>
+  <span class="sp"></span>
+  <select id="device" title="Телевизор"><option value="">ищу телевизоры…</option></select>
+</header>
+
+<main>
+  <section id="lib" class="panel">
+    <input id="q" type="search" placeholder="Поиск по названию">
+    <ul id="list"></ul>
+  </section>
+  <section id="detail" class="panel"><div class="empty">Выберите фильм слева.</div></section>
+</main>
+
+<div id="player">
+  <div class="inner">
+    <div class="top"><span class="now" id="now">Ничего не играет</span><span id="time">0:00 / 0:00</span></div>
+    <input id="seek" type="range" min="0" max="0" step="1" value="0" disabled>
+    <div class="ctl">
+      <button id="back" title="Назад 30 с">⟲ 30</button>
+      <button id="toggle">▶︎</button>
+      <button id="fwd" title="Вперед 30 с">30 ⟳</button>
+      <button id="stop">■ Стоп</button>
+      <span id="err"></span>
+      <span class="sp"></span>
+      <button id="mute" title="Без звука">🔊</button>
+      <input id="vol" type="range" min="0" max="100" step="1" value="50">
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (path, body) => {
+  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"},
+                                      body: JSON.stringify(body)} : {});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+};
+const fmt = s => {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+};
+const gb = b => b > 1e9 ? (b / 1e9).toFixed(1) + " ГБ" : Math.round(b / 1e6) + " МБ";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const MODES = {direct: "напрямую", remux: "пересборка", transcode: "перекодирование"};
+
+let items = [], selected = null, st = null, dragging = false;
+const device = () => $("#device").value;
+
+async function loadDevices() {
+  const list = await api("/api/devices");
+  const cur = device() || localStorage.getItem("tvcast.device");
+  $("#device").innerHTML = list.length
+    ? list.map(d => `<option value="${d.id}">${esc(d.name)} · ${esc(d.model)}</option>`).join("")
+    : `<option value="">ищу телевизоры…</option>`;
+  if (list.some(d => d.id === cur)) $("#device").value = cur;
+  if (!list.length) setTimeout(loadDevices, 2000);
+}
+$("#device").onchange = () => { try { localStorage.setItem("tvcast.device", device()); } catch {} };
+
+async function loadLibrary() {
+  const data = await api("/api/library");
+  items = data.items;
+  renderList(data.root);
+}
+function renderList(root) {
+  const q = $("#q").value.trim().toLowerCase();
+  const shown = items.filter(i => i.rel.toLowerCase().includes(q));
+  $("#list").innerHTML = shown.length ? shown.map(i => `
+    <li data-id="${i.id}" class="${selected?.id === i.id ? "sel" : ""}">
+      <div class="t">${esc(i.title)}</div><div class="m">${esc(i.rel)} · ${gb(i.size)}</div>
+    </li>`).join("")
+    : `<li class="empty">${items.length ? "Ничего не найдено." :
+       `Пока пусто. Положите фильмы в <code>${esc(root || "")}</code> и обновите страницу.`}</li>`;
+}
+$("#q").oninput = () => renderList();
+$("#list").onclick = e => { const li = e.target.closest("li[data-id]"); if (li) openItem(li.dataset.id); };
+
+async function openItem(id, opts = {}) {
+  const q = new URLSearchParams();
+  if (opts.audio != null) q.set("audio", opts.audio);
+  if (opts.transcode) q.set("transcode", "true");
+  $("#detail").innerHTML = `<div class="empty">Читаю файл…</div>`;
+  try { selected = await api(`/api/item/${id}?${q}`); }
+  catch (e) { $("#detail").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  renderList();
+  const p = selected.probe;
+  const audio = p.audio.map(a => `<option value="${a.index}" ${opts.audio == a.index || (opts.audio == null && a.default) ? "selected" : ""}>
+      ${esc([a.lang, a.title, a.codec, a.channels ? a.channels + "ch" : ""].filter(Boolean).join(" · "))}</option>`).join("");
+  const subs = `<option value="">без субтитров</option>` + p.subtitles.map(s =>
+      `<option value="${s.key}" ${s.supported ? "" : "disabled"} ${opts.sub === s.key ? "selected" : ""}>${esc(s.label)}${s.supported ? "" : " (картинкой — не поддерживается)"}</option>`).join("");
+  $("#detail").innerHTML = `
+    <h2>${esc(selected.title)}</h2>
+    <div class="meta">${p.width}×${p.height} · ${esc(p.video_codec)} ${esc(p.video_profile)} · ${fmt(p.duration)}</div>
+    <div><span class="badge b-${selected.mode}">${MODES[selected.mode]}</span>
+         <span class="meta"> ${esc(selected.reason)}</span></div>
+    <div class="row"><label>Звук</label><select id="audio">${audio || "<option>нет</option>"}</select></div>
+    <div class="row"><label>Субтитры</label><select id="sub">${subs}</select></div>
+    <div class="row"><label>Качество</label>
+      <label style="color:var(--text)"><input type="checkbox" id="tc" ${opts.transcode ? "checked" : ""}>
+        перекодировать (если на ТВ нет картинки)</label></div>
+    <div class="actions">
+      <button class="primary" id="play">▶︎ Показать на ТВ</button>
+      <button id="resume" style="display:none"></button>
+      <span id="perr" style="color:var(--bad)"></span>
+    </div>`;
+  const reopen = () => openItem(id, {audio: $("#audio").value === "" ? null : +$("#audio").value,
+                                     sub: $("#sub").value, transcode: $("#tc").checked});
+  $("#audio").onchange = reopen; $("#tc").onchange = reopen;
+  let saved = 0; try { saved = +localStorage.getItem("tvcast.pos." + id) || 0; } catch {}
+  if (saved > 60) {
+    $("#resume").style.display = "";
+    $("#resume").textContent = `Продолжить с ${fmt(saved)}`;
+    $("#resume").onclick = () => play(saved);
+  }
+  $("#play").onclick = () => play(0);
+}
+
+async function play(start) {
+  if (!device()) { $("#perr").textContent = "Телевизор не найден"; return; }
+  $("#perr").textContent = "Запускаю…";
+  try {
+    await api("/api/play", {device: device(), item: selected.id, start,
+      audio: $("#audio").value === "" || isNaN(+$("#audio").value) ? null : +$("#audio").value,
+      sub: $("#sub").value || null, transcode: $("#tc").checked});
+    $("#perr").textContent = "";
+  } catch (e) { $("#perr").textContent = e.message; }
+}
+
+const ctl = (action, value) => device() && api("/api/control", {device: device(), action, value})
+  .catch(e => $("#err").textContent = e.message);
+$("#toggle").onclick = () => ctl(st?.state === "PLAYING" ? "pause" : "play");
+$("#stop").onclick = () => ctl("stop");
+$("#back").onclick = () => st && ctl("seek", st.position - 30);
+$("#fwd").onclick = () => st && ctl("seek", st.position + 30);
+$("#mute").onclick = () => ctl("mute");
+$("#vol").onchange = e => ctl("volume", e.target.value / 100);
+$("#seek").oninput = e => { dragging = true; $("#time").textContent = `${fmt(e.target.value)} / ${fmt(st?.duration)}`; };
+$("#seek").onchange = e => { dragging = false; ctl("seek", +e.target.value); };
+
+async function poll() {
+  if (device()) {
+    try {
+      st = await api(`/api/status/${device()}`);
+      const s = st.session, active = s && st.state && st.state !== "UNKNOWN";
+      $("#now").textContent = s ? `${s.title} · ${MODES[s.mode]}` : (st.app ? `На ТВ: ${st.app}` : "Ничего не играет");
+      $("#toggle").textContent = st.state === "PLAYING" ? "❚❚" : "▶︎";
+      $("#seek").disabled = !active;
+      $("#seek").max = Math.floor(st.duration || 0);
+      if (!dragging) {
+        $("#seek").value = Math.floor(st.position || 0);
+        $("#time").textContent = `${fmt(st.position)} / ${fmt(st.duration)}`;
+      }
+      if (st.volume != null && document.activeElement !== $("#vol")) $("#vol").value = Math.round(st.volume * 100);
+      $("#mute").textContent = st.muted ? "🔇" : "🔊";
+      $("#err").textContent = s?.error || "";
+      if (s && st.state === "PLAYING" && st.position > 60) {
+        try { localStorage.setItem("tvcast.pos." + s.item_id, Math.floor(st.position)); } catch {}
+      }
+    } catch (e) { $("#err").textContent = e.message; }
+  }
+  setTimeout(poll, 1000);
+}
+
+loadDevices(); loadLibrary(); poll();
+</script>
+</body>
+</html>
