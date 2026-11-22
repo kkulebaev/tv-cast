@@ -90,6 +90,7 @@
       <button id="fwd" title="Вперед 30 с">30 ⟳</button>
       <button id="stop">■ Стоп</button>
       <button id="next" style="display:none"></button>
+      <button id="cancelnext" style="display:none">Отмена</button>
       <span id="err"></span>
       <span class="sp"></span>
       <button id="mute" title="Без звука">🔊</button>
@@ -117,6 +118,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", 
 const MODES = {direct: "напрямую", remux: "пересборка", transcode: "перекодирование"};
 
 let items = [], root = "", selected = null, st = null, dragging = false, lastSession = null;
+let followFrom = null;
 let openGroups = new Set();
 try { openGroups = new Set(JSON.parse(localStorage.getItem("tvcast.open") || "[]")); } catch {}
 const pad = n => String(n).padStart(2, "0");
@@ -296,12 +298,9 @@ $("#stop").onclick = () => ctl("stop");
 $("#back").onclick = () => st && ctl("seek", st.position - 30);
 $("#fwd").onclick = () => st && ctl("seek", st.position + 30);
 $("#mute").onclick = () => ctl("mute");
-$("#next").onclick = async () => {
-  const next = nextEpisode(items.find(i => i.id === st?.session?.item_id));
-  if (!next || !device()) return;
-  try { await api("/api/play", {device: device(), item: next.id, start: 0}); openItem(next.id); }
-  catch (e) { $("#err").textContent = e.message; }
-};
+// The server picks the next episode and carries the audio and subtitle choice over to it.
+$("#next").onclick = () => ctl("next");
+$("#cancelnext").onclick = () => ctl("cancel_next");
 $("#vol").onchange = e => ctl("volume", e.target.value / 100);
 $("#seek").oninput = e => { dragging = true; $("#time").textContent = `${fmt(e.target.value)} / ${fmt(st?.duration)}`; };
 $("#seek").onchange = e => { dragging = false; ctl("seek", +e.target.value); };
@@ -322,12 +321,21 @@ async function poll() {
       if (st.volume != null && document.activeElement !== $("#vol")) $("#vol").value = Math.round(st.volume * 100);
       $("#mute").textContent = st.muted ? "🔇" : "🔊";
       $("#err").textContent = s?.error || "";
-      const next = s && nextEpisode(items.find(i => i.id === s.item_id));
+      const up = st.next_up;
+      if (up) $("#now").textContent = up.in < 1 ? `Запускаю ${up.series} · ${epCode(up)}…`
+        : `Далее: ${up.series} · ${epCode(up)} через ${Math.ceil(up.in)} с`;
+      const next = up || (s && nextEpisode(items.find(i => i.id === s.item_id)));
       $("#next").style.display = next ? "" : "none";
-      if (next) $("#next").textContent = `Следующая: ${epCode(next)} ⏭`;
+      if (next) $("#next").textContent = up ? "▶ Сейчас" : `Следующая: ${epCode(next)} ⏭`;
+      $("#cancelnext").style.display = up ? "" : "none";
       // The server saves positions every 10 s; refresh the marks when a film starts or ends.
       const sid = s?.item_id || null;
       if (sid !== lastSession) {
+        // Follow autoplay: the details pane showing the episode that ended moves to the new one.
+        // Between the two there is no session for the whole countdown, so remember the old one.
+        const from = lastSession || followFrom;
+        if (sid && from && selected?.id === from) openItem(sid);
+        followFrom = !sid && lastSession && up ? lastSession : sid ? null : followFrom;
         lastSession = sid;
         loadLibrary().then(() => {
           const fresh = selected && items.find(i => i.id === selected.id);
