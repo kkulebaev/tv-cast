@@ -17,7 +17,7 @@ class Settings:
     port: int = field(default_factory=lambda: int(os.environ.get("TVCAST_PORT", "8765")))
     # mDNS alone can miss the TV right after it wakes up; a known IP is probed directly.
     known_hosts: list[str] = field(
-        default_factory=lambda: _list(os.environ.get("TVCAST_HOSTS", "192.168.3.4"))
+        default_factory=lambda: _list(os.environ.get("TVCAST_HOSTS"))
     )
     vaapi_device: str = field(
         default_factory=lambda: os.environ.get("TVCAST_VAAPI", "/dev/dri/renderD128")
