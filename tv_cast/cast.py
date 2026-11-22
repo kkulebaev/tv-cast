@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from urllib.parse import quote
 
 import pychromecast
+from pychromecast.config import APP_MEDIA_RECEIVER
 from pychromecast.controllers.media import (
     METADATA_TYPE_MOVIE,
     STREAM_TYPE_BUFFERED,
@@ -28,6 +29,7 @@ class Session:
     sub_key: str | None
     force_transcode: bool
     duration: float
+    url: str = ""
     # Streamed (remux/transcode) output always starts at t=0, so the receiver's clock
     # is relative to where ffmpeg was told to start.
     offset: float = 0.0
@@ -40,7 +42,13 @@ class _Listener(MediaStatusListener):
         self.manager, self.uuid = manager, uuid
 
     def new_media_status(self, status):
-        pass
+        # A seek in a piped stream reloads the URL and reports the old one as IDLE/INTERRUPTED,
+        # so only the end of the current URL closes the session. ERROR keeps it for its message.
+        if status.player_state != "IDLE" or status.idle_reason not in ("FINISHED", "CANCELLED"):
+            return
+        session = self.manager.sessions.get(self.uuid)
+        if session and status.content_id == session.url:
+            self.manager.end_session(self.uuid, session)
 
     def load_media_failed(self, queue_item_id, error_code):
         session = self.manager.sessions.get(self.uuid)
@@ -99,6 +107,13 @@ class CastManager:
             for uuid, c in casts
         ]
 
+    def end_session(self, uuid: str, session: Session):
+        # Listener callbacks run on pychromecast's thread; a play() that just stored a new
+        # session must not lose it to a stale check.
+        with self._lock:
+            if self.sessions.get(uuid) is session:
+                del self.sessions[uuid]
+
     def get(self, uuid: str) -> pychromecast.Chromecast:
         with self._lock:
             cast = self._casts.get(uuid)
@@ -142,7 +157,7 @@ class CastManager:
         session = Session(
             item_id=item.id, title=item.title, mode=mode, reason=reason,
             audio_index=audio_index, sub_key=sub_key, force_transcode=force_transcode,
-            duration=probe.duration, offset=offset,
+            duration=probe.duration, url=url, offset=offset,
         )
         self.sessions[uuid] = session
         log.info("play %s on %s: %s (%s) %s", item.rel, uuid, mode, reason, url)
@@ -195,6 +210,11 @@ class CastManager:
         cast = self.get(uuid)
         ms = cast.media_controller.status
         session = self.sessions.get(uuid)
+        # Another app opened on the TV; the grace period covers our own receiver still launching.
+        if (session and cast.app_id not in (None, APP_MEDIA_RECEIVER)
+                and time.time() - session.started_at > 30):
+            self.end_session(uuid, session)
+            session = None
         offset = session.offset if session else 0.0
         duration = session.duration if session else (ms.duration or 0)
         return {
