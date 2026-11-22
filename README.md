@@ -59,6 +59,13 @@ TVCAST_MEDIA_DIR=/mnt/media/movies TVCAST_HOSTS=192.168.1.50 uv run tvcast
 
 При пересборке и перекодировании перемотка перезапускает ffmpeg с новой точки.
 
+## Разработка
+
+```sh
+uv run pytest
+uv run ruff check .
+```
+
 ## Ограничения
 
 - Субтитры-картинки (PGS/VobSub из Blu-ray-рипов) не поддерживаются, только текстовые.
