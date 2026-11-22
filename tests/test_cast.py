@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tv_cast import cast
+from tv_cast import cast, progress
 
 
 def manager_with_session(url="http://pc/stream/1.mp4?start=0"):
@@ -19,10 +19,12 @@ def status(state, reason=None, content_id="http://pc/stream/1.mp4?start=0"):
     return SimpleNamespace(player_state=state, idle_reason=reason, content_id=content_id)
 
 
-def test_finished_playback_ends_the_session():
+def test_finished_playback_ends_the_session_and_marks_watched():
     m, listener = manager_with_session()
     listener.new_media_status(status("IDLE", "FINISHED"))
     assert "tv" not in m.sessions
+    assert progress.store.get("1")["watched"] is True
+    assert progress.store.path.exists()
 
 
 def test_reload_after_seek_keeps_the_session():
@@ -88,3 +90,68 @@ def test_status_drops_session_when_another_app_runs(app_id, age, kept):
     assert ("tv" in m.sessions) is kept
     assert (st["session"] is not None) is kept
     assert st["position"] == (105.0 if kept else 5.0)
+
+
+def playing_cast(content_id, state="PLAYING", t=500.0):
+    calls = []
+    return SimpleNamespace(
+        calls=calls,
+        media_controller=SimpleNamespace(
+            status=SimpleNamespace(content_id=content_id, player_state=state,
+                                   adjusted_current_time=t),
+            stop=lambda: calls.append("stop")),
+        quit_app=lambda: calls.append("quit"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("content_id", "state", "saved"),
+    [
+        ("http://pc/stream/1.mp4?start=0", "PLAYING", 1500.0),
+        ("http://pc/stream/1.mp4?start=0", "PAUSED", 1500.0),
+        ("http://pc/stream/1.mp4?start=0", "BUFFERING", None),
+        # Right after a seek the receiver still reports the previous URL's clock.
+        ("http://pc/stream/1.mp4?start=900", "PLAYING", None),
+    ],
+)
+def test_record_saves_the_film_position(content_id, state, saved):
+    m, _ = manager_with_session()
+    m.sessions["tv"].offset = 1000.0
+    m.sessions["tv"].duration = 7200.0
+    m._casts["tv"] = playing_cast(content_id, state)
+    m.record("tv")
+    assert progress.store.get("1").get("pos") == saved
+
+
+def test_finished_without_known_duration_still_marks_watched():
+    m, listener = manager_with_session()
+    m.sessions["tv"].duration = 0.0
+    listener.new_media_status(status("IDLE", "FINISHED"))
+    assert progress.store.get("1")["watched"] is True
+
+
+def test_stop_saves_the_position_before_stopping():
+    m, _ = manager_with_session()
+    m.sessions["tv"].duration = 7200.0
+    tv = playing_cast("http://pc/stream/1.mp4?start=0", t=900.0)
+    m._casts["tv"] = tv
+    m.get = lambda uuid: tv
+    m.control("tv", "stop")
+    assert tv.calls == ["stop", "quit"]
+    assert progress.store.get("1")["pos"] == 900.0
+    assert progress.store.path.exists()
+
+
+def test_failing_save_does_not_block_stop(monkeypatch):
+    m, _ = manager_with_session()
+    tv = playing_cast("http://pc/stream/1.mp4?start=0")
+    m._casts["tv"] = tv
+    m.get = lambda uuid: tv
+
+    def disk_full():
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(progress.store, "flush", disk_full)
+    m.control("tv", "stop")
+    assert tv.calls == ["stop", "quit"]
+    m.save(None)  # what the tracker thread runs each round: must not raise either

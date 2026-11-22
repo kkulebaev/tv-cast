@@ -13,7 +13,7 @@ from pychromecast.controllers.media import (
     MediaStatusListener,
 )
 
-from . import media
+from . import media, progress
 from .config import settings
 
 log = logging.getLogger("tvcast.cast")
@@ -48,6 +48,8 @@ class _Listener(MediaStatusListener):
             return
         session = self.manager.sessions.get(self.uuid)
         if session and status.content_id == session.url:
+            if status.idle_reason == "FINISHED":
+                self.manager.finish(session)
             self.manager.end_session(self.uuid, session)
 
     def load_media_failed(self, queue_item_id, error_code):
@@ -70,14 +72,62 @@ class CastManager:
         self._casts: dict[str, pychromecast.Chromecast] = {}
         self._lock = threading.Lock()
         self._browser = None
+        self._stopping = threading.Event()
         self.sessions: dict[str, Session] = {}
 
     def start(self):
         self._browser = pychromecast.get_chromecasts(
             blocking=False, callback=self._on_cast, known_hosts=settings.known_hosts
         )
+        # Positions are saved here rather than from the web page, so they survive a closed
+        # browser or a phone that went to sleep.
+        threading.Thread(target=self._track, name="tvcast-progress", daemon=True).start()
+
+    def _track(self):
+        while not self._stopping.wait(10):
+            for uuid in list(self.sessions):
+                self.save(uuid, flush=False)
+            self.save(None)
+
+    def save(self, uuid: str | None, flush: bool = True):
+        # Saving is a side effect: a full disk or a flaky TV must not break playback control
+        # or kill the tracker thread for the rest of the run.
+        try:
+            if uuid is not None:
+                self.record(uuid)
+            if flush:
+                progress.store.flush()
+        except Exception:
+            log.exception("could not save watch progress")
+
+    def finish(self, session: Session):
+        try:
+            if session.duration > 0:
+                progress.store.update(session.item_id, session.duration, session.duration)
+            else:
+                progress.store.set_watched(session.item_id, True)
+            progress.store.flush()
+        except Exception:
+            log.exception("could not mark %s watched", session.item_id)
+
+    def record(self, uuid: str):
+        session = self.sessions.get(uuid)
+        with self._lock:
+            cast = self._casts.get(uuid)
+        if session is None or cast is None:
+            return
+        ms = cast.media_controller.status
+        # Between a seek and the new load the receiver still reports the old URL's clock.
+        if ms.content_id != session.url or ms.player_state not in ("PLAYING", "PAUSED"):
+            return
+        progress.store.update(
+            session.item_id, session.offset + (ms.adjusted_current_time or 0), session.duration)
 
     def stop(self):
+        self._stopping.set()
+        for uuid in list(self.sessions):
+            self.save(uuid, flush=False)
+        self.save(None)
         if self._browser:
             self._browser.stop_discovery()
         for cast in self._casts.values():
@@ -132,6 +182,9 @@ class CastManager:
         force_transcode: bool = False,
     ) -> Session:
         cast = self.get(uuid)
+        # The new load replaces the session; the episode being left keeps its last seconds.
+        if uuid in self.sessions:
+            self.save(uuid)
         probe = media.probe(item)
         mode, reason = media.plan(probe, audio_index, force_transcode)
         base = f"http://{local_ip_for(cast.cast_info.host)}:{settings.port}"
@@ -188,6 +241,7 @@ class CastManager:
             case "pause":
                 mc.pause()
             case "stop":
+                self.save(uuid)
                 mc.stop()
                 # Otherwise the receiver lingers on its idle cast screen for minutes.
                 cast.quit_app()

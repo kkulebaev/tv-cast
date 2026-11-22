@@ -19,6 +19,13 @@ class Settings:
     known_hosts: list[str] = field(
         default_factory=lambda: _list(os.environ.get("TVCAST_HOSTS"))
     )
+    state_dir: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("TVCAST_STATE_DIR")
+            or Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+            / "tvcast"
+        ).expanduser()
+    )
     vaapi_device: str = field(
         default_factory=lambda: os.environ.get("TVCAST_VAAPI", "/dev/dri/renderD128")
     )

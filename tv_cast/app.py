@@ -9,9 +9,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import media
+from . import media, progress
 from .cast import local_ip_for, manager
 from .config import settings
 
@@ -56,11 +56,13 @@ async def devices():
 @app.get("/api/library")
 async def library():
     items = await run_in_threadpool(media.scan)
+    seen = progress.store.all()
     return {
         "root": str(settings.media_dir),
         "items": [
             {"id": i.id, "title": i.title, "rel": i.rel, "size": i.size, "mtime": i.mtime,
-             "series": i.series, "season": i.season, "episode": i.episode}
+             "series": i.series, "season": i.season, "episode": i.episode,
+             "progress": seen.get(i.id, {})}
             for i in items
         ],
     }
@@ -76,7 +78,30 @@ async def item_info(item_id: str, audio: int | None = None, transcode: bool = Fa
     mode, reason = media.plan(probe, audio, transcode)
     return {"id": item.id, "title": item.title, "rel": item.rel,
             "series": item.series, "season": item.season, "episode": item.episode,
+            "progress": progress.store.get(item.id),
             "probe": media.probe_dict(probe), "mode": mode, "reason": reason}
+
+
+class ProgressRequest(BaseModel):
+    item: str
+    # Infinity would be stored and then break every library response (JSON has no inf).
+    pos: float | None = Field(None, ge=0, allow_inf_nan=False)
+    watched: bool | None = None
+    # Positions carried over from a browser must not roll back newer server history.
+    only_if_new: bool = False
+
+
+@app.post("/api/progress")
+async def set_progress(req: ProgressRequest):
+    _item(req.item)
+    if req.only_if_new and progress.store.get(req.item):
+        return progress.store.get(req.item)
+    if req.pos is not None:
+        progress.store.update(req.item, req.pos)
+    if req.watched is not None:
+        progress.store.set_watched(req.item, req.watched)
+    await run_in_threadpool(progress.store.flush)
+    return progress.store.get(req.item)
 
 
 class PlayRequest(BaseModel):
