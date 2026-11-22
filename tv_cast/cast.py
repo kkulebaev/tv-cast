@@ -151,8 +151,11 @@ class CastManager:
             offset, current_time = start, 0.0
 
         subtitles = None
+        sub_lang = "und"
         if sub_key:
             subtitles = f"{base}/subs/{item.id}/{quote(sub_key)}.vtt?start={offset:.3f}"
+            track = next((s for s in probe.subtitles if s.key == sub_key), None)
+            sub_lang = media.bcp47(track.lang if track else "")
 
         session = Session(
             item_id=item.id, title=item.title, mode=mode, reason=reason,
@@ -170,7 +173,7 @@ class CastManager:
             stream_type=STREAM_TYPE_BUFFERED,
             metadata={"metadataType": METADATA_TYPE_MOVIE, "title": item.title},
             subtitles=subtitles,
-            subtitles_lang="ru",
+            subtitles_lang=sub_lang,
         )
         mc.block_until_active(timeout=20)
         return session

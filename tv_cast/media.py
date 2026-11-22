@@ -24,6 +24,14 @@ CAST_AUDIO = {"aac", "mp3", "opus", "vorbis", "flac"}
 # Bitmap subtitles (PGS, VobSub) can't become WebVTT without OCR.
 TEXT_SUBS = {"subrip", "ass", "ssa", "webvtt", "mov_text", "text"}
 _SUB_KEY = re.compile(r"[ex][0-9]+")
+# The receiver wants BCP 47 codes, while ffprobe reports ISO 639-2 ones.
+_LANGS = {
+    "rus": "ru", "eng": "en", "ukr": "uk", "bel": "be", "ger": "de", "deu": "de",
+    "fre": "fr", "fra": "fr", "spa": "es", "ita": "it", "por": "pt", "pol": "pl",
+    "cze": "cs", "ces": "cs", "jpn": "ja", "kor": "ko", "chi": "zh", "zho": "zh",
+    "tur": "tr", "ara": "ar", "heb": "he", "dut": "nl", "nld": "nl", "swe": "sv",
+    "fin": "fi", "nor": "no", "dan": "da", "hun": "hu", "gre": "el", "ell": "el",
+}
 
 Mode = Literal["direct", "remux", "transcode"]
 
@@ -116,6 +124,21 @@ def sidecar(item: Item, n: int) -> Path | None:
     return subs[n] if 0 <= n < len(subs) else None
 
 
+def bcp47(lang: str) -> str:
+    lang = lang.lower()
+    if lang in _LANGS:
+        return _LANGS[lang]
+    return lang if len(lang) == 2 and lang.isalpha() else "und"
+
+
+def _sidecar_lang(sub: Path, video: Path) -> str:
+    # "Movie.forced.en.srt" -> "en": the language is the last tag that looks like one.
+    # "hi" and "cc" in subtitle names mean hearing-impaired / closed captions, not Hindi.
+    tags = sub.name[len(video.stem) + 1 : -len(sub.suffix)].split(".")
+    return next(
+        (t for t in reversed(tags) if t.lower() not in {"hi", "cc"} and bcp47(t) != "und"), "")
+
+
 def probe(item: Item) -> Probe:
     key = (str(item.path), item.mtime)
     if key in _probe_cache:
@@ -151,7 +174,8 @@ def probe(item: Item) -> Probe:
                 lang=lang, supported=codec in TEXT_SUBS,
             ))
     for n, p in enumerate(_sidecar_subs(item.path)):
-        subs.append(SubTrack(key=f"x{n}", label=f"файл: {p.name}"))
+        subs.append(SubTrack(key=f"x{n}", label=f"файл: {p.name}",
+                             lang=_sidecar_lang(p, item.path)))
 
     result = Probe(
         duration=float(data.get("format", {}).get("duration") or 0),

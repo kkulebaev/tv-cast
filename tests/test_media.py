@@ -104,6 +104,26 @@ def test_subs_cmd_rejects_malformed_keys(key):
     assert media.ffmpeg_subs_cmd(item(), key) is None
 
 
+def test_sidecar_subs_and_languages(tmp_path):
+    film = tmp_path / "Film.mkv"
+    for name in ["Film.mkv", "Film.srt", "Film.ru.srt", "Film.forced.en.vtt", "Film.en.hi.srt",
+                 "Film 2.srt", "Other.srt", "Film.nfo"]:
+        (tmp_path / name).touch()
+    subs = media._sidecar_subs(film)
+    assert [p.name for p in subs] == [
+        "Film.en.hi.srt", "Film.forced.en.vtt", "Film.ru.srt", "Film.srt"]
+    assert [media._sidecar_lang(p, film) for p in subs] == ["en", "en", "ru", ""]
+    cmd = media.ffmpeg_subs_cmd(media.Item("id", film, "Film.mkv", 0, 0), "x2")
+    assert str(tmp_path / "Film.ru.srt") in cmd
+    assert media.ffmpeg_subs_cmd(media.Item("id", film, "Film.mkv", 0, 0), "x9") is None
+
+
+@pytest.mark.parametrize(("raw", "code"), [("rus", "ru"), ("ENG", "en"), ("de", "de"),
+                                          ("", "und"), ("forced", "und"), ("xyz", "und")])
+def test_bcp47(raw, code):
+    assert media.bcp47(raw) == code
+
+
 def test_scan_finds_videos_recursively(tmp_path, monkeypatch):
     monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
     (tmp_path / "b").mkdir()
