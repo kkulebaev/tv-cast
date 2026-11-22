@@ -75,6 +75,12 @@ class _Listener(MediaStatusListener):
         log.warning("load failed on %s: %s", self.uuid, error_code)
 
 
+def _episode_label(item: media.Item) -> str:
+    if item.series:
+        return f"{item.series} · S{item.season:02d}E{item.episode:02d}"
+    return item.title
+
+
 def local_ip_for(host: str) -> str:
     # The default route goes through the VPN tunnel; asking the kernel for the route to
     # the TV itself yields the LAN address the TV can actually reach.
@@ -93,6 +99,10 @@ class CastManager:
         self.pending: dict[str, NextUp] = {}
         self._gen: dict[str, int] = {}
         self._play_locks: dict[str, threading.Lock] = {}
+        # Why the last autoplay didn't start; shown in the player until the user acts.
+        self.errors: dict[str, str] = {}
+        # The episode that just ended, so "next" still works once its session is gone.
+        self.finished: dict[str, Session] = {}
 
     def start(self):
         self._browser = pychromecast.get_chromecasts(
@@ -137,6 +147,7 @@ class CastManager:
         with self._lock:
             gen = self._gen[uuid] = self._gen.get(uuid, 0) + 1
             up = self.pending.pop(uuid, None)
+            self.errors.pop(uuid, None)
         if up and up.timer:
             up.timer.cancel()
         return gen
@@ -146,6 +157,8 @@ class CastManager:
             return self._play_locks.setdefault(uuid, threading.Lock())
 
     def on_finished(self, uuid: str, session: Session, current_time: float | None = None):
+        # Kept even for a stream that broke off: "next" is still a fair request then.
+        self.finished[uuid] = session
         pos = max(session.last_pos, session.offset + (current_time or 0))
         # A stream whose ffmpeg died mid-film also ends as FINISHED on the receiver.
         if session.duration > 0 and not progress.is_finished(pos, session.duration):
@@ -180,6 +193,7 @@ class CastManager:
             up = self.next_for(session, gen)
         except Exception:
             log.exception("could not prepare the episode after %s", session.title)
+            self._fail(uuid, gen, "не удалось прочитать следующую серию")
             return
         if up is None:
             return
@@ -202,15 +216,25 @@ class CastManager:
             if self.pending.get(uuid) is not up:
                 return
             del self.pending[uuid]
+            gen = up.gen
             cast = self._casts.get(uuid)
         if cast is not None and cast.app_id not in (None, APP_MEDIA_RECEIVER):
             log.info("not starting %s: %s is open on the TV", up.item.rel, cast.app_display_name)
+            self._fail(uuid, gen, f"{_episode_label(up.item)} не запущена: на телевизоре "
+                                  f"открыто {cast.app_display_name or 'другое приложение'}")
             return
         try:
             self.play(uuid, up.item, up.audio_index, up.sub_key, 0.0, up.force_transcode,
-                      gen=up.gen)
+                      gen=gen)
         except Exception:
             log.exception("could not start %s", up.item.rel)
+            self._fail(uuid, gen, f"не удалось запустить {_episode_label(up.item)}")
+
+    def _fail(self, uuid: str, gen: int, message: str):
+        with self._lock:
+            # A user action since then has made the failure irrelevant.
+            if self._gen.get(uuid, 0) == gen:
+                self.errors[uuid] = message
 
     def cancel_next(self, uuid: str):
         self._bump(uuid)
@@ -338,6 +362,9 @@ class CastManager:
                 log.info("not starting %s: superseded on %s", item.rel, uuid)
                 return None
             self.sessions[uuid] = session
+            # Whatever ended before is no longer what "next" or the player's notes are about.
+            self.finished.pop(uuid, None)
+            self.errors.pop(uuid, None)
         log.info("play %s on %s: %s (%s) %s", item.rel, uuid, mode, reason, url)
 
         mc = cast.media_controller
@@ -364,6 +391,7 @@ class CastManager:
                 mc.pause()
             case "stop":
                 self._bump(uuid)
+                self.finished.pop(uuid, None)
                 # Waits out a launch already past its last check, so it can't restart the TV.
                 with self._play_lock(uuid):
                     self.save(uuid)
@@ -387,19 +415,26 @@ class CastManager:
             case "next":
                 with self._lock:
                     up = self.pending.get(uuid)
-                    gen = self._gen.get(uuid, 0)
-                if up is None and session is not None:
+                # Right after an episode ends its session is gone, but "next" still means
+                # the one after it, even while autoplay is still probing.
+                base = session or self.finished.get(uuid)
+                if up is None and base is not None:
                     try:
-                        up = self.next_for(session, gen)
+                        up = self.next_for(base)
                     except Exception as e:
                         raise RuntimeError("не удалось прочитать следующую серию") from e
-                    if up is not None:
-                        with self._lock:
-                            self.pending[uuid] = up
                 if up is not None:
-                    if up.timer:
-                        up.timer.cancel()
-                    self._start_next(uuid, up)
+                    # A user action: a countdown or an autoplay still being prepared stands down.
+                    # The generation stays local: the timer thread may hold the same NextUp.
+                    gen = self._bump(uuid)
+                    try:
+                        self.play(uuid, up.item, up.audio_index, up.sub_key, 0.0,
+                                  up.force_transcode, gen=gen)
+                    except (KeyError, RuntimeError):
+                        raise
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"не удалось запустить {_episode_label(up.item)}") from e
             case "cancel_next":
                 self.cancel_next(uuid)
             case "volume":
@@ -421,7 +456,11 @@ class CastManager:
         offset = session.offset if session else 0.0
         duration = session.duration if session else (ms.duration or 0)
         up = self.pending.get(uuid)
+        after = None if session else self.finished.get(uuid)
         return {
+            "error": self.errors.get(uuid),
+            # What just ended, so the player can still offer the episode after it.
+            "after": after.item_id if after else None,
             "next_up": None if up is None else {
                 "item_id": up.item.id,
                 "series": up.item.series,

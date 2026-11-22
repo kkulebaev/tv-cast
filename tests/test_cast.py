@@ -326,3 +326,89 @@ def test_next_reports_an_unreadable_next_episode(series, monkeypatch):
     monkeypatch.setattr(media, "probe", broken)
     with pytest.raises(RuntimeError, match="следующую серию"):
         m.control("tv", "next")
+
+
+def test_failed_autoplay_is_shown_until_the_user_acts(series):
+    m, _ = series
+
+    def broken_play(*args, **kw):
+        m.started.set()
+        raise OSError("TV went away")
+
+    m.play = broken_play
+    m.queue_next("tv", m.sessions["tv"], 0, delay=0.05)
+    assert m.started.wait(5)
+    for _ in range(50):
+        if "tv" in m.errors:
+            break
+        time.sleep(0.02)
+    m.get = lambda uuid: fake_cast(cast.APP_MEDIA_RECEIVER)
+    assert m.status("tv")["error"] == "не удалось запустить Dark · S01E02"
+    m.cancel_next("tv")
+    assert m.status("tv")["error"] is None
+
+
+def test_unreadable_next_episode_is_shown(series, monkeypatch):
+    m, _ = series
+
+    def broken(_item):
+        raise ValueError("bad ffprobe json")
+
+    monkeypatch.setattr(media, "probe", broken)
+    m.queue_next("tv", m.sessions["tv"], 0)
+    assert m.errors["tv"] == "не удалось прочитать следующую серию"
+
+
+def test_next_right_after_the_end_uses_the_finished_episode(series):
+    m, listener = series
+    listener.new_media_status(status("IDLE", "FINISHED"))  # autoplay off: nothing queued
+    assert "tv" not in m.sessions
+    m.get = lambda uuid: fake_cast(cast.APP_MEDIA_RECEIVER)
+    assert m.status("tv")["after"] == "1"
+    m.control("tv", "next")
+    assert [(c[1].id, c[2], c[3]) for c in m.calls] == [("2", 3, "e5")]
+
+
+def test_next_while_autoplay_is_still_probing_starts_it_once(series):
+    m, listener = series
+    gen_at_finish = 0
+    listener.new_media_status(status("IDLE", "FINISHED"))
+    m.get = lambda uuid: fake_cast(cast.APP_MEDIA_RECEIVER)
+    m.control("tv", "next")
+    # The autoplay that was probing in the background finishes only now.
+    m.queue_next("tv", m.finished["tv"], gen_at_finish, delay=0.05)
+    time.sleep(0.2)
+    assert len(m.calls) == 1 and m.pending == {}
+
+
+def test_stop_forgets_the_finished_episode(series):
+    m, listener = series
+    listener.new_media_status(status("IDLE", "FINISHED"))
+    m.get = lambda uuid: receiver()
+    m.control("tv", "stop")
+    assert m.status("tv")["after"] is None
+
+
+def test_after_is_forgotten_once_something_else_plays(series):
+    m, listener = series
+    listener.new_media_status(status("IDLE", "FINISHED"))
+    tv = receiver()
+    m.get = lambda uuid: tv
+    m._casts["tv"] = tv
+    m.play = m.real_play
+    film = m.play("tv", media.get("1"))
+    # The film is stopped with the TV remote: its session just ends, no FINISHED.
+    listener.new_media_status(status("IDLE", "CANCELLED", content_id=film.url))
+    assert m.status("tv")["after"] is None
+
+
+def test_autoplay_that_yields_to_another_app_says_so(series):
+    m, _ = series
+    m._casts["tv"] = SimpleNamespace(app_id="233637DE", app_display_name="YouTube")
+    m.queue_next("tv", m.sessions["tv"], 0, delay=0.01)
+    for _ in range(50):
+        if "tv" in m.errors:
+            break
+        time.sleep(0.02)
+    assert m.errors["tv"] == "Dark · S01E02 не запущена: на телевизоре открыто YouTube"
+    assert m.calls == []

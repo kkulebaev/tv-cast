@@ -320,11 +320,13 @@ async function poll() {
       }
       if (st.volume != null && document.activeElement !== $("#vol")) $("#vol").value = Math.round(st.volume * 100);
       $("#mute").textContent = st.muted ? "🔇" : "🔊";
-      $("#err").textContent = s?.error || "";
+      $("#err").textContent = s?.error || st.error || "";
       const up = st.next_up;
       if (up) $("#now").textContent = up.in < 1 ? `Запускаю ${up.series} · ${epCode(up)}…`
         : `Далее: ${up.series} · ${epCode(up)} через ${Math.ceil(up.in)} с`;
-      const next = up || (s && nextEpisode(items.find(i => i.id === s.item_id)));
+      // After an episode ends (autoplay off, or still preparing) "after" names it.
+      const cur = s?.item_id || st.after;
+      const next = up || (cur && nextEpisode(items.find(i => i.id === cur)));
       $("#next").style.display = next ? "" : "none";
       if (next) $("#next").textContent = up ? "▶ Сейчас" : `Следующая: ${epCode(next)} ⏭`;
       $("#cancelnext").style.display = up ? "" : "none";
