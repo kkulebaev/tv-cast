@@ -37,6 +37,12 @@
   #list .t { font-weight: 500; }
   #list .m { color: var(--muted); font-size: 12px; }
   #list li.group .t { font-weight: 600; }
+  #list li[data-id], #list li.group { display: flex; gap: 10px; align-items: center; }
+  #list .info { flex: 1; min-width: 0; }
+  .thumb { width: 6rem; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px;
+           background: #0b0d11; flex: none; }
+  .hero { display: block; width: 100%; max-height: 16rem; object-fit: contain; background: #0b0d11;
+          border-radius: 8px; margin-bottom: 14px; }
   #list li.ep { padding-left: 28px; }
   .mark { float: right; color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
   .mark.done { color: var(--ok); }
@@ -134,6 +140,9 @@ const continueEpisode = series => {
   if (last >= 0 && !eps[last].progress.watched) return eps[last];
   return eps.slice(last + 1).find(e => !e.progress.watched) || null;
 };
+const poster = (i, series) => `/poster/${i.id}.jpg${series ? "?series=1" : ""}`;
+const thumb = (i, series) => `<img class="thumb" loading="lazy" alt="" src="${poster(i, series)}"
+  onerror="this.style.visibility='hidden'">`;
 const mark = p => p.watched ? `<span class="mark done">✓</span>`
   : p.pos ? `<span class="mark">${p.duration ? Math.round(p.pos / p.duration * 100) + "%" : fmt(p.pos)}</span>` : "";
 const device = () => $("#device").value;
@@ -173,7 +182,9 @@ function itemRow(i) {
   // The file name is already in the second line, and for episodes it is often just "S01E04".
   const title = i.series ? epCode(i) : esc(i.title);
   return `<li data-id="${i.id}" class="${i.series ? "ep " : ""}${selected?.id === i.id ? "sel" : ""}">
-      <div class="t">${mark(i.progress)}${title}</div><div class="m">${esc(i.rel)} · ${gb(i.size)}</div>
+      ${thumb(i)}<div class="info">
+        <div class="t">${mark(i.progress)}${title}</div><div class="m">${esc(i.rel)} · ${gb(i.size)}</div>
+      </div>
     </li>`;
 }
 function groupRows(series, eps, expanded) {
@@ -181,10 +192,10 @@ function groupRows(series, eps, expanded) {
   const watched = all.filter(e => e.progress.watched).length;
   const seasons = new Set(all.map(e => e.season)).size;
   const cont = continueEpisode(series);
-  const head = `<li class="group" data-series="${esc(series)}">
+  const head = `<li class="group" data-series="${esc(series)}">${thumb(all[0], true)}<div class="info">
       <div class="t">${expanded ? "▾" : "▸"} ${esc(series)}</div>
       <div class="m">${seasons > 1 ? seasons + " сез. · " : ""}${all.length} сер. · просмотрено ${watched}/${all.length}${cont ? " · дальше " + epCode(cont) : ""}</div>
-    </li>`;
+    </div></li>`;
   return head + (expanded ? eps.map(itemRow).join("") : "");
 }
 function renderList() {
@@ -235,6 +246,7 @@ async function openItem(id, opts = {}) {
   const subs = `<option value="">без субтитров</option>` + p.subtitles.map(s =>
       `<option value="${s.key}" ${s.supported ? "" : "disabled"} ${opts.sub === s.key ? "selected" : ""}>${esc(s.label)}${s.supported ? "" : " (картинкой — не поддерживается)"}</option>`).join("");
   $("#detail").innerHTML = `
+    <img class="hero" alt="" src="${poster(selected)}" onerror="this.remove()">
     <h2>${esc(selected.series ? `${selected.series} · ${epCode(selected)}` : selected.title)}</h2>
     <div class="meta">${p.width}×${p.height} · ${esc(p.video_codec)} ${esc(p.video_profile)} · ${fmt(p.duration)}</div>
     <div><span class="badge b-${selected.mode}">${MODES[selected.mode]}</span>

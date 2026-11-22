@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import media, progress
+from . import media, posters, progress
 from .cast import local_ip_for, manager
 from .config import settings
 
@@ -159,6 +159,32 @@ async def status(device: str):
         return await run_in_threadpool(manager.status, device)
     except KeyError as e:
         raise HTTPException(404, "телевизор не найден") from e
+
+
+# Opening the library asks for every visible poster at once; a few ffmpeg runs at a time
+# keep the first visit from stalling streams that are already playing.
+_poster_slots = asyncio.Semaphore(2)
+
+
+@app.get("/poster/{item_id}.jpg")
+async def poster(request: Request, item_id: str, series: bool = False):
+    item = _item(item_id)
+    try:
+        src, path, probe = await run_in_threadpool(posters.locate, item, series)
+        if not path.exists():
+            # Only making a picture waits for a slot; ready ones are served right away.
+            async with _poster_slots:
+                path = await run_in_threadpool(posters.render, item, probe, src, path)
+    except Exception as e:
+        log.info("no poster for %s: %s", item.rel, e)
+        raise HTTPException(404, "нет картинки") from e
+    # Revalidated on every view: replacing poster.jpg changes the picture without changing any
+    # URL the page knows. The cache file is named by a hash of its source, which makes the
+    # name a ready ETag; Starlette's FileResponse doesn't answer If-None-Match by itself.
+    headers = {"Cache-Control": "no-cache", "ETag": f'"{path.stem}"'}
+    if request.headers.get("if-none-match") == headers["ETag"]:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type="image/jpeg", headers=headers)
 
 
 @app.get("/media/{item_id}.{ext}")

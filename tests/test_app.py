@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from tv_cast import app, media, progress
+from tv_cast import app, media, posters, progress
 from tv_cast.config import settings
 
 
@@ -111,3 +111,29 @@ def test_library_and_progress_api(monkeypatch, tmp_path):
     assert post(pos=300, only_if_new=True).json()["watched"] is True
     # Both at once: the explicit mark wins over the position's implied "still watching".
     assert post(pos=300, watched=True).json() == {**post().json(), "watched": True}
+
+
+def test_poster_endpoint_revalidates_and_404s(monkeypatch, tmp_path):
+    item = media.Item("abc", Path("/m/Film.mkv"), "Film.mkv", 1, 0.0)
+    monkeypatch.setattr(media, "get", lambda item_id: item if item_id == "abc" else None)
+    jpg = tmp_path / "abc-i-0123456789ab.jpg"
+    jpg.write_bytes(b"jpeg")
+    monkeypatch.setattr(posters, "locate", lambda i, series=False: (("frame", 1.0), jpg, None))
+
+    def must_not_render(*a):
+        raise AssertionError("a ready picture must not wait for an ffmpeg slot")
+
+    monkeypatch.setattr(posters, "render", must_not_render)
+    client = TestClient(app.app)
+    first = client.get("/poster/abc.jpg")
+    assert (first.status_code, first.content) == (200, b"jpeg")
+    assert first.headers["etag"] == '"abc-i-0123456789ab"'
+    again = client.get("/poster/abc.jpg", headers={"If-None-Match": first.headers["etag"]})
+    assert (again.status_code, again.content) == (304, b"")
+
+    def no_picture(i, series=False):
+        raise RuntimeError("ffmpeg failed")
+
+    monkeypatch.setattr(posters, "locate", no_picture)
+    assert client.get("/poster/abc.jpg").status_code == 404
+    assert client.get("/poster/zzz.jpg").status_code == 404

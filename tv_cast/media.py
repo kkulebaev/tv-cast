@@ -71,6 +71,8 @@ class Probe:
     width: int
     height: int
     color_transfer: str = ""
+    # Stream index of an embedded cover image (MKV attachment or MP4 "attached pic").
+    cover: int | None = None
     audio: list[Track] = field(default_factory=list)
     subtitles: list[SubTrack] = field(default_factory=list)
 
@@ -316,6 +318,8 @@ def probe(item: Item) -> Probe:
         width=video.get("width", 0),
         height=video.get("height", 0),
         color_transfer=video.get("color_transfer", ""),
+        cover=next((s["index"] for s in streams if s["codec_type"] == "video"
+                    and s.get("disposition", {}).get("attached_pic")), None),
         audio=audio,
         subtitles=subs,
     )
