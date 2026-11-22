@@ -1,6 +1,9 @@
 import asyncio
 import logging
+import os
+import sys
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import anyio
@@ -284,12 +287,41 @@ def _lan_ip() -> str | None:
     return None
 
 
+def _banner(lan_ip: str | None) -> str:
+    # Escape codes in a redirected log or under systemd turn into garbage; NO_COLOR is
+    # the common convention for turning colors off (https://no-color.org).
+    color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+    def paint(text: str, code: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if color else text
+
+    try:
+        ver = version("tv-cast")
+    except PackageNotFoundError:
+        ver = "dev"
+
+    def url(host: str) -> str:
+        return paint(f"http://{host}:", "36") + paint(str(settings.port), "1;36") + paint("/", "36")
+
+    rows = [
+        ("Local", url("localhost")),
+        ("Network", url(lan_ip) if lan_ip else paint("не найден", "33")),
+        ("Library", str(settings.media_dir)),
+        ("TVs", " + ".join(["mDNS", *settings.known_hosts])),
+        ("Autoplay", "on" if settings.autoplay else "off"),
+    ]
+    width = max(len(label) for label, _ in rows) + 1
+    lines = ["", f"  {paint('▶ tv-cast', '1;35')} {paint('v' + ver, '2')}", ""]
+    lines += [
+        f"  {paint('➜', '32')}  {paint((label + ':').ljust(width), '1')}  {value}"
+        for label, value in rows
+    ]
+    return "\n".join([*lines, ""])
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    log.info("library: %s", settings.media_dir)
-    log.info("open http://localhost:%d", settings.port)
-    if ip := _lan_ip():
-        log.info("in LAN: http://%s:%d", ip, settings.port)
+    print(_banner(_lan_ip()), flush=True)
     uvicorn.run(app, host="0.0.0.0", port=settings.port, log_level="warning")
 
 
