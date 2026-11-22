@@ -13,7 +13,7 @@ log = logging.getLogger("tvcast.progress")
 MIN_POSITION = 60.0
 
 
-def _is_finished(pos: float, duration: float) -> bool:
+def is_finished(pos: float, duration: float) -> bool:
     # End credits run several minutes, so a film stopped during them counts as watched.
     return duration > 0 and duration - pos < max(120.0, duration * 0.05)
 
@@ -53,7 +53,7 @@ class Progress:
         with self._lock:
             data = self._load()
             rec = data.get(item_id, {})
-            if _is_finished(pos, duration):
+            if is_finished(pos, duration):
                 rec.update(pos=0.0, watched=True)
             elif pos >= MIN_POSITION:
                 rec.update(pos=round(pos, 1), watched=False)

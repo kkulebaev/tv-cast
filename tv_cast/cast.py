@@ -33,6 +33,8 @@ class Session:
     # Streamed (remux/transcode) output always starts at t=0, so the receiver's clock
     # is relative to where ffmpeg was told to start.
     offset: float = 0.0
+    # Film time last seen by the tracker; tells a real ending from a stream that broke off.
+    last_pos: float = 0.0
     error: str | None = None
     started_at: float = field(default_factory=time.time)
 
@@ -49,7 +51,7 @@ class _Listener(MediaStatusListener):
         session = self.manager.sessions.get(self.uuid)
         if session and status.content_id == session.url:
             if status.idle_reason == "FINISHED":
-                self.manager.finish(session)
+                self.manager.on_finished(self.uuid, session, status.current_time)
             self.manager.end_session(self.uuid, session)
 
     def load_media_failed(self, queue_item_id, error_code):
@@ -110,6 +112,15 @@ class CastManager:
         except Exception:
             log.exception("could not mark %s watched", session.item_id)
 
+    def on_finished(self, uuid: str, session: Session, current_time: float | None = None):
+        pos = max(session.last_pos, session.offset + (current_time or 0))
+        # A stream whose ffmpeg died mid-film also ends as FINISHED on the receiver.
+        if session.duration > 0 and not progress.is_finished(pos, session.duration):
+            log.warning("%s ended at %.0f of %.0f s; not marking it watched",
+                        session.title, pos, session.duration)
+            return
+        self.finish(session)
+
     def record(self, uuid: str):
         session = self.sessions.get(uuid)
         with self._lock:
@@ -120,8 +131,8 @@ class CastManager:
         # Between a seek and the new load the receiver still reports the old URL's clock.
         if ms.content_id != session.url or ms.player_state not in ("PLAYING", "PAUSED"):
             return
-        progress.store.update(
-            session.item_id, session.offset + (ms.adjusted_current_time or 0), session.duration)
+        session.last_pos = session.offset + (ms.adjusted_current_time or 0)
+        progress.store.update(session.item_id, session.last_pos, session.duration)
 
     def stop(self):
         self._stopping.set()
@@ -213,7 +224,7 @@ class CastManager:
         session = Session(
             item_id=item.id, title=item.title, mode=mode, reason=reason,
             audio_index=audio_index, sub_key=sub_key, force_transcode=force_transcode,
-            duration=probe.duration, url=url, offset=offset,
+            duration=probe.duration, url=url, offset=offset, last_pos=offset + current_time,
         )
         self.sessions[uuid] = session
         log.info("play %s on %s: %s (%s) %s", item.rel, uuid, mode, reason, url)
@@ -255,6 +266,9 @@ class CastManager:
                         self.play(uuid, item, session.audio_index, session.sub_key,
                                   target, session.force_transcode)
                 else:
+                    if session:
+                        # Lets a FINISHED right after a jump to the credits count as watched.
+                        session.last_pos = target
                     mc.seek(target)
             case "volume":
                 cast.set_volume(max(0.0, min(1.0, float(value or 0))))

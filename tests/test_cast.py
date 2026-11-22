@@ -15,8 +15,9 @@ def manager_with_session(url="http://pc/stream/1.mp4?start=0"):
     return m, cast._Listener(m, "tv")
 
 
-def status(state, reason=None, content_id="http://pc/stream/1.mp4?start=0"):
-    return SimpleNamespace(player_state=state, idle_reason=reason, content_id=content_id)
+def status(state, reason=None, content_id="http://pc/stream/1.mp4?start=0", current_time=None):
+    return SimpleNamespace(player_state=state, idle_reason=reason, content_id=content_id,
+                           current_time=current_time)
 
 
 def test_finished_playback_ends_the_session_and_marks_watched():
@@ -155,3 +156,24 @@ def test_failing_save_does_not_block_stop(monkeypatch):
     m.control("tv", "stop")
     assert tv.calls == ["stop", "quit"]
     m.save(None)  # what the tracker thread runs each round: must not raise either
+
+
+def test_broken_off_stream_is_not_marked_watched():
+    m, listener = manager_with_session()
+    s = m.sessions["tv"]
+    s.duration, s.last_pos = 3600.0, 1200.0
+    listener.new_media_status(status("IDLE", "FINISHED"))
+    assert progress.store.get("1") == {}
+    assert "tv" not in m.sessions
+
+
+def test_direct_seek_to_the_credits_then_finished_counts():
+    m, listener = manager_with_session()
+    s = m.sessions["tv"]
+    s.mode, s.duration, s.last_pos = "direct", 3600.0, 600.0
+    tv = playing_cast(s.url)
+    tv.media_controller.seek = lambda t: None
+    m.get = lambda uuid: tv
+    m.control("tv", "seek", 3560)
+    listener.new_media_status(status("IDLE", "FINISHED"))
+    assert progress.store.get("1")["watched"] is True
