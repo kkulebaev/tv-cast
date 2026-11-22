@@ -170,9 +170,7 @@ def video_ok(p: Probe) -> bool:
     if p.video_codec not in CAST_VIDEO:
         return False
     # The TV's H.264 decoder has no High 10 profile; HEVC Main 10 is fine.
-    if p.video_codec == "h264" and ("10" in p.video_profile or "10" in p.pix_fmt):
-        return False
-    return True
+    return not (p.video_codec == "h264" and ("10" in p.video_profile or "10" in p.pix_fmt))
 
 
 def plan(p: Probe, audio_index: int | None, force_transcode: bool = False) -> tuple[Mode, str]:
@@ -249,7 +247,7 @@ def keyframe_before(item: Item, t: float) -> float:
          "-read_intervals", f"{max(0.0, t - 20):.3f}%{t + 0.05:.3f}",
          "-show_entries", "frame=pts_time,best_effort_timestamp_time", "-of", "csv=p=0",
          str(item.path)],
-        capture_output=True, text=True,
+        check=False, capture_output=True, text=True,
     ).stdout
     times = []
     for line in out.split():
