@@ -148,6 +148,8 @@ async def control(req: ControlRequest):
         raise HTTPException(404, "телевизор не найден") from e
     except ValueError as e:
         raise HTTPException(400, f"неизвестная команда {req.action}") from e
+    except RuntimeError as e:
+        raise HTTPException(422, str(e)) from e
     return {"ok": True}
 
 

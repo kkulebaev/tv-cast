@@ -26,6 +26,10 @@ class Settings:
             / "tvcast"
         ).expanduser()
     )
+    autoplay: bool = field(
+        default_factory=lambda: os.environ.get("TVCAST_AUTOPLAY", "1").lower()
+        not in ("0", "false", "no", "off")
+    )
     vaapi_device: str = field(
         default_factory=lambda: os.environ.get("TVCAST_VAAPI", "/dev/dri/renderD128")
     )
