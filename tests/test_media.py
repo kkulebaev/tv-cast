@@ -97,3 +97,15 @@ def test_shift_vtt_moves_drops_and_clamps_cues():
 
 def test_shift_vtt_without_offset_is_identity():
     assert media.shift_vtt(VTT, 0) == VTT
+
+
+def test_scan_finds_videos_recursively(tmp_path, monkeypatch):
+    monkeypatch.setattr(media, "settings", replace(settings, media_dir=tmp_path))
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "Film.MKV").write_bytes(b"x" * 3)
+    (tmp_path / "a.mp4").touch()
+    (tmp_path / "notes.txt").touch()
+    items = media.scan()
+    assert [i.rel for i in items] == ["a.mp4", "b/Film.MKV"]
+    assert media.get(items[1].id).size == 3
+    assert media.get("missing") is None

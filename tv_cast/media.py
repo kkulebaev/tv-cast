@@ -89,8 +89,9 @@ def scan() -> list[Item]:
                 st = p.stat()
                 item_id = hashlib.sha1(rel.encode()).hexdigest()[:16]
                 found[item_id] = Item(item_id, p, rel, st.st_size, st.st_mtime)
-    _library.clear()
-    _library.update(found)
+    global _library
+    # Swapped whole: requests served from other threads must never see a half-built dict.
+    _library = found
     return sorted(found.values(), key=lambda i: i.rel.lower())
 
 
