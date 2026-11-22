@@ -7,8 +7,9 @@ import anyio
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import media, progress
@@ -34,6 +35,14 @@ app = FastAPI(title="tv-cast", lifespan=lifespan)
 # The Cast receiver fetches WebVTT via XHR from its own origin and drops the track
 # without a CORS header.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"])
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(_request: Request, exc: RequestValidationError):
+    # The default answer echoes the rejected value, and inf/nan can't be encoded as JSON,
+    # which turns a plain 422 into a 500.
+    errors = [{k: v for k, v in e.items() if k not in ("input", "ctx")} for e in exc.errors()]
+    return JSONResponse({"detail": errors}, status_code=422)
 
 
 def _item(item_id: str) -> media.Item:

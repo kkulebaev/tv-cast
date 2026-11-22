@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -101,6 +102,10 @@ def test_library_and_progress_api(monkeypatch, tmp_path):
     (item,) = client.get("/api/library").json()["items"]
     assert item["progress"]["watched"] is True
     assert client.post("/api/progress", json={"item": "nope", "pos": 100}).status_code == 404
+    # JSON clients can't send inf, but Python's parser accepts a bare Infinity token.
+    raw = json.dumps({"item": item["id"]})[:-1] + ', "pos": Infinity}'
+    inf = client.post("/api/progress", content=raw, headers={"Content-Type": "application/json"})
+    assert inf.status_code == 422
     assert post(pos=-5).status_code == 422
     # A browser's leftover position never rolls back what the server already knows.
     assert post(pos=300, only_if_new=True).json()["watched"] is True
