@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from . import media
-from .cast import manager
+from .cast import local_ip_for, manager
 from .config import settings
 
 log = logging.getLogger("tvcast")
@@ -175,10 +175,23 @@ async def subs(request: Request, item_id: str, key: str, start: float = 0.0):
     return Response(vtt, media_type="text/vtt; charset=utf-8")
 
 
+def _lan_ip() -> str | None:
+    # Routing toward a known TV rather than the internet keeps the VPN tunnel address
+    # out of the answer: only the LAN address is reachable from the phone and the TV.
+    for host in [*settings.known_hosts, "192.168.0.1"]:
+        try:
+            return local_ip_for(host)
+        except OSError:
+            continue
+    return None
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     log.info("library: %s", settings.media_dir)
     log.info("open http://localhost:%d", settings.port)
+    if ip := _lan_ip():
+        log.info("in LAN: http://%s:%d", ip, settings.port)
     uvicorn.run(app, host="0.0.0.0", port=settings.port, log_level="warning")
 
 
