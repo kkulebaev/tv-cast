@@ -371,16 +371,20 @@ def gpu_tonemap() -> bool:
     return r.returncode == 0
 
 
+def tonemap_filter() -> str:
+    """HDR to 8-bit BT.709 NV12: on the GPU when Vulkan works, else on the CPU."""
+    if gpu_tonemap():
+        return f"libplacebo=tonemapping=auto:{_TO_BT709}:format=nv12"
+    return ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+            "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=nv12")
+
+
 def _transcode_video(p: Probe, vaapi: bool) -> list[str]:
     hdr = p.color_transfer in HDR_TRANSFERS
     filters = []
     if hdr:
         # An 8-bit H.264 stream still tagged PQ/HLG shows washed-out colors on the TV.
-        filters.append(
-            f"libplacebo=tonemapping=auto:{_TO_BT709}:format=nv12" if gpu_tonemap()
-            else "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
-                 "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=nv12"
-        )
+        filters.append(tonemap_filter())
     if vaapi:
         # Codecs the GPU can't decode (H.264 High 10, MPEG-4 ASP) fall back to software
         # frames, so the graph has to accept both kinds; hwupload passes VAAPI frames through.
