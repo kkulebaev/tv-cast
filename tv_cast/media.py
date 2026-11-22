@@ -140,7 +140,8 @@ def _sidecar_lang(sub: Path, video: Path) -> str:
 
 
 def probe(item: Item) -> Probe:
-    key = (str(item.path), item.mtime)
+    # The directory mtime changes when sidecar subtitles are added or renamed.
+    key = (str(item.path), item.mtime, item.path.parent.stat().st_mtime)
     if key in _probe_cache:
         return _probe_cache[key]
     out = subprocess.run(
