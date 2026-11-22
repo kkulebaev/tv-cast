@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -126,10 +127,19 @@ async def direct(item_id: str, ext: str):
     return FileResponse(item.path, media_type="video/webm" if ext == "webm" else "video/mp4")
 
 
+async def _tail(stream: asyncio.StreamReader, keep: int = 4096) -> bytes:
+    # Left unread, a full stderr pipe blocks ffmpeg mid-stream on files with broken frames.
+    tail = b""
+    while chunk := await stream.read(4096):
+        tail = (tail + chunk)[-keep:]
+    return tail
+
+
 async def _pipe(cmd: list[str], request: Request, chunk: int = 256 * 1024):
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
+    err_task = asyncio.create_task(_tail(proc.stderr))
     try:
         while True:
             data = await proc.stdout.read(chunk)
@@ -139,10 +149,19 @@ async def _pipe(cmd: list[str], request: Request, chunk: int = 256 * 1024):
             if await request.is_disconnected():
                 break
     finally:
-        if proc.returncode is None:
-            proc.kill()
-        await proc.wait()
-        err = (await proc.stderr.read()).decode(errors="ignore").strip()
+        # Shielded: a client disconnect cancels this generator, and an abandoned cleanup
+        # would leak the process and its pipes.
+        tail = b""
+        with anyio.CancelScope(shield=True), anyio.move_on_after(10):
+            if proc.returncode is None:
+                proc.kill()
+            # proc.wait() returns only after every pipe closes, and stdout paused by a slow
+            # client never reaches EOF unless it is read out.
+            while await proc.stdout.read(chunk):
+                pass
+            await proc.wait()
+            tail = await err_task
+        err = tail.decode(errors="ignore").strip()
         if err and proc.returncode not in (0, -9):
             log.warning("ffmpeg (%s): %s", proc.returncode, err[-500:])
 
